@@ -4,6 +4,7 @@
 
 - `host.js` — Host 半：引擎主体。函数体形式（`return { apply(ctx) {...} }`），运行在 DSH 宿主进程。
   - 模块：扫描（适配器注册表）→ 解析（JSON/CSV/PO/INI/TXT/YAML/RenPy + RPG Maker MV/MZ + RGSS Marshal + krkr）→ 翻译（词典优先/缓存/在线 API）→ QA → 导出（按格式重建 + 字节级写回）。
+  - token 优化：语境标签（`ctxTagOf`）压缩 API 提示词；无字母/高 CJK 条目跳过（method=`skip`）；原文+语境去重；`apiChunk` 分批（默认 40）；parse/translate 只返回 ≤20 条紧凑预览 + perFile 统计。
   - 依赖服务：`fs`、`web`、`sandboxPolicy`、`subprocess`（均 `ctx.get` 可选获取，缺失时给出明确错误）。
   - 会话工作区：从工具执行上下文 `exec.agent.session.header.cwd` 获取；写入时携带 `sandboxPolicy.resolve({session})`。
   - 二进制写盘：自实现 base64 编码器 + node 子进程 `writeFileSync`（沙箱 `btoa` 是 UTF-8 语义，不能用于二进制）。
@@ -23,6 +24,7 @@
 7. 沙箱 `btoa` = UTF-8 编码后 base64；二进制必须用自实现 `bytesToB64`。
 8. krkr 引号属性值切片：值域是 `[start+1, end)`，替换后剩余从 `end+1` 开始。
 9. `subprocess.spawn` 必须带 `graceMs`。
+10. token 优化（v8/v11）：语境标签/智能过滤（skip）/同语境去重/`apiChunk` 分批/紧凑预览（≤20 条）；QA 对 `skip` 条目静默。
 
 ## 与预设版的关系
 

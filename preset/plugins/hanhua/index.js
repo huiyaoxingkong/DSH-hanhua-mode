@@ -1,4 +1,4 @@
-// 汉化引擎静态插件包（用于「汉化模式」预设）v10
+// 汉化引擎静态插件包（用于「汉化模式」预设）v11 · token 优化（语境标签/过滤/去重/压缩提示词/紧凑预览）
 // 纯 ESM，无 import；消费 host 的 tools/systemPrompt/fs/web/sandboxPolicy/subprocess 服务。
 // 支持：JSON/CSV/TSV/PO/TXT/INI/YAML/RenPy、RPG Maker MV/MZ、
 //      RGSS 家族（XP/VX/VX Ace/mkxp-z 的 .rxdata/.rvdata/.rvdata2 Ruby Marshal）、
@@ -78,6 +78,7 @@ export function apply(ctx) {
     sourceLang: 'auto',
     rgssEncoding: 'auto',
     krkrEncoding: 'auto',
+    apiChunk: 40,
     iconvPath: '',
   }
 
@@ -994,6 +995,7 @@ export function apply(ctx) {
     if (!targets.length) throw new Error('没有可解析的文件，请先执行 hanhua_scan')
     const entries = []
     const errors = []
+    const perFile = {}
     let truncated = false
     for (const t of targets) {
       if (entries.length >= MAX_ENTRIES) { truncated = true; break }
@@ -1055,16 +1057,42 @@ export function apply(ctx) {
         try { text = await readText(t.path) } catch (e) { continue }
         parseRenpy(text, file, entries)
       } else continue
+      perFile[t.rel] = (perFile[t.rel] || 0) + (entries.length - before)
       console.log('parsed ' + t.rel + ': ' + (entries.length - before) + ' entries')
     }
     state.entries = entries
     state.summary.parsed = entries.length
     await persistParsed()
-    return { total: entries.length, truncated, files: targets.length, errors: errors.slice(0, 50), entries: entries.slice(0, 300) }
+    return { total: entries.length, truncated, files: targets.length, perFile, errors: errors.slice(0, 50), entries: entries.slice(0, 20) }
   }
 
   const PLACEHOLDER_RE = /(%[-+0-9.#]*[a-zA-Z%])|(\{\d+\})|(\$\{[^{}]*\})|(\\[A-Za-z]{1,2}\[\d+\])|(\$\.[A-Za-z]*)|(<\/?[A-Za-z][^>]*>)/g
   const placeholdersOf = (text) => { const m = text.match(PLACEHOLDER_RE); return (m || []).slice().sort() }
+  const CJK_RE = /[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]/g
+  const cjkRatio = (s) => { const m = s.match(CJK_RE); return s.length ? (m ? m.length : 0) / s.length : 0 }
+  function ctxTagOf(e) {
+    const f = e.format || ''
+    const loc = e.loc && typeof e.loc === 'object' ? e.loc.loc : null
+    if (e.engine === 'rgss-map' || e.engine === 'rgss-db' || e.engine === 'rgss-system') {
+      if (e.engine === 'rgss-system') return '系统术语'
+      if (typeof loc === 'string') {
+        if (loc.endsWith('.name')) return '名称'
+        if (loc.includes('.w')) return '选项分支'
+        if (loc.includes('.c')) return '选项'
+        if (loc.includes('.x')) return '注释'
+        return '地图对话'
+      }
+      return '游戏文本'
+    }
+    if (f === 'krkr-ks' || f === 'krkr-tjs' || f === 'renpy') return '剧本对话'
+    if (f === 'krkr-csv' || f === 'csv') return '表格'
+    if (f === 'krkr-txt' || f === 'txt') return '文本'
+    if (f === 'json') return 'JSON'
+    if (f === 'ini') return 'INI'
+    if (f === 'po') return '翻译条目'
+    if (f === 'yaml') return 'YAML'
+    return '文本'
+  }
 
   function translateWithGlossary(text, gloss, cacheMap) {
     if (cacheMap && cacheMap[text] !== undefined && cacheMap[text] !== null && cacheMap[text] !== '') return { target: cacheMap[text], method: 'cache' }
@@ -1097,9 +1125,10 @@ export function apply(ctx) {
     return { target: result, method: hit ? 'glossary' : 'passthrough' }
   }
 
-  async function translateWithApi(texts) {
+  async function translateWithApi(items) {
     if (!config.apiUrl || !config.apiKey) throw new Error('未配置 apiUrl/apiKey')
-    const prompt = 'You are a professional game localization engine. Translate each of the following ' + texts.length + ' strings into ' + config.targetLang + ' (source language: ' + config.sourceLang + '). Rules: keep every placeholder exactly as-is (%s %d {0} ${name} \\N[1] \\V[1] \\C[2] \\$ <color=...> tags), preserve quotes and line breaks. Use natural game-localization tone, never add explanations. Output ONLY a JSON array of ' + texts.length + ' strings in the same order.\n\nStrings:\n' + JSON.stringify(texts)
+    const pairs = items.map((e) => [ctxTagOf(e), e.source])
+    const prompt = 'Game localization. Translate each [context, text] pair into ' + config.targetLang + ' (from ' + config.sourceLang + '). Match the context style: names/menu short, dialogue natural, descriptions complete. Keep every placeholder exactly (%s %d {0} \\N[1] \\V[1] <tag>). Output ONLY a JSON array of ' + items.length + ' strings, same order.\n' + JSON.stringify(pairs)
     const res = await ctx.web.fetch({
       url: config.apiUrl,
       method: 'POST',
@@ -1133,12 +1162,13 @@ export function apply(ctx) {
     if (ls !== lt) w.push('\u6362\u884c\u6570 ' + ls + ' -> ' + lt)
     if (source.startsWith(' ') !== target.startsWith(' ')) w.push('\u884c\u9996\u7a7a\u683c\u4e0d\u4e00\u81f4')
     if (source.endsWith(' ') !== target.endsWith(' ')) w.push('\u884c\u5c3e\u7a7a\u683c\u4e0d\u4e00\u81f4')
-    if (method !== 'passthrough' && source.length >= 8 && target.length > 0) {
+    const quiet = method === 'passthrough' || method === 'skip'
+    if (!quiet && source.length >= 8 && target.length > 0) {
       const ratio = target.length / source.length
       if (ratio > 3.5) w.push('\u8bd1\u6587\u8fc7\u957f x' + ratio.toFixed(1))
       if (ratio < 0.2) w.push('\u8bd1\u6587\u8fc7\u77ed x' + ratio.toFixed(1))
     }
-    if (method !== 'api' && /[A-Za-z]{3,}/.test(target)) w.push('\u8bd1\u6587\u6b8b\u7559\u82f1\u6587\uff08\u53ef\u7528 hanhua_config \u914d\u7f6e\u5728\u7ebf API \u8865\u5168\uff09')
+    if (method !== 'api' && !quiet && /[A-Za-z]{3,}/.test(target)) w.push('\u8bd1\u6587\u6b8b\u7559\u82f1\u6587\uff08\u53ef\u7528 hanhua_config \u914d\u7f6e\u5728\u7ebf API \u8865\u5168\uff09')
     return w
   }
 
@@ -1154,6 +1184,7 @@ export function apply(ctx) {
     const ids = Array.isArray(args.ids) ? args.ids : null
     const limit = typeof args.limit === 'number' ? Math.max(1, Math.min(args.limit, 5000)) : 500
     const forceApi = !!args.forceApi
+    const chunkSize = Math.max(1, Math.min(parseInt(config.apiChunk, 10) || 40, 100))
     let pool = state.entries
     if (ids && ids.length) {
       const idSet = new Set(ids)
@@ -1162,26 +1193,40 @@ export function apply(ctx) {
     pool = pool.slice(0, limit)
     if (!pool.length) throw new Error('没有待翻译条目（先执行 hanhua_parse）')
     const results = []
-    const apiBatch = []
+    const candidates = []
     if (forceApi) {
       if (!config.apiUrl || !config.apiKey) throw new Error('在线翻译不可用：请先通过 hanhua_config 配置 apiUrl/apiKey')
-      apiBatch.push(...pool)
+      candidates.push(...pool)
     } else {
       for (const e of pool) {
         const r = translateWithGlossary(e.source, glossary, cache)
-        if (r.method === 'passthrough' && /[A-Za-z]{2,}/.test(e.source)) apiBatch.push(e)
+        if (r.method === 'passthrough') candidates.push(e)
         else results.push({ id: e.id, file: e.file, source: e.source, target: r.target, method: r.method })
       }
+    }
+    // 智能过滤（省 API token）：无字母条目 / 已含大量中日韩字符条目直接跳过；同原文+语境去重
+    const apiBatch = []
+    const dedupedList = []
+    const seenKey = new Set()
+    const firstOfKey = new Map()
+    for (const e of candidates) {
+      if (!/[A-Za-z]{2,}/.test(e.source)) { results.push({ id: e.id, file: e.file, source: e.source, target: e.source, method: 'skip' }); continue }
+      if (cjkRatio(e.source) >= 0.5) { results.push({ id: e.id, file: e.file, source: e.source, target: e.source, method: 'skip' }); continue }
+      const key = e.source + '\u0000' + ctxTagOf(e)
+      if (seenKey.has(key)) { dedupedList.push({ e, key }); continue }
+      seenKey.add(key)
+      firstOfKey.set(key, e.id)
+      apiBatch.push(e)
     }
     if (apiBatch.length) {
       if (!config.apiUrl || !config.apiKey) {
         apiBatch.forEach((e) => results.push({ id: e.id, file: e.file, source: e.source, target: e.source, method: 'passthrough' }))
         state.lastError = '未配置在线翻译 API，仅使用词典（hanhua_config 可配置）'
       } else {
-        for (let i = 0; i < apiBatch.length; i += 30) {
-          const chunk = apiBatch.slice(i, i + 30)
+        for (let i = 0; i < apiBatch.length; i += chunkSize) {
+          const chunk = apiBatch.slice(i, i + chunkSize)
           try {
-            const outs = await translateWithApi(chunk.map((e) => e.source))
+            const outs = await translateWithApi(chunk)
             chunk.forEach((e, j) => {
               const t = typeof outs[j] === 'string' && outs[j] ? outs[j] : e.source
               cache[e.source] = t
@@ -1195,6 +1240,17 @@ export function apply(ctx) {
         }
       }
     }
+    // 去重条目复用同语境首条译文（不额外调用 API）
+    if (dedupedList.length) {
+      const byId = new Map()
+      results.forEach((r) => { if (!byId.has(r.id)) byId.set(r.id, r) })
+      for (const { e, key } of dedupedList) {
+        const firstId = firstOfKey.get(key)
+        const src = byId.get(firstId)
+        const method = src && src.method === 'api' ? 'api' : 'passthrough'
+        results.push({ id: e.id, file: e.file, source: e.source, target: src ? src.target : e.source, method })
+      }
+    }
     let qaWarnings = 0
     for (const r of results) {
       r.warnings = qaCheck(r.source, r.target, r.method)
@@ -1205,7 +1261,7 @@ export function apply(ctx) {
     state.summary.qaWarnings = qaWarnings
     await persistTranslated()
     await persistCache()
-    return { summary: summaryOf(results, qaWarnings), preview: results.slice(0, 200) }
+    return { summary: summaryOf(results, qaWarnings), preview: results.filter((r) => r.method !== 'passthrough' && r.method !== 'skip').slice(0, 20) }
   }
 
   const setByPath = (obj, segments, value) => {
@@ -1471,6 +1527,7 @@ export function apply(ctx) {
     if (args.rgssEncoding !== undefined) config.rgssEncoding = args.rgssEncoding
     if (args.krkrEncoding !== undefined) config.krkrEncoding = args.krkrEncoding
     if (args.iconvPath !== undefined) config.iconvPath = args.iconvPath
+    if (args.apiChunk !== undefined) config.apiChunk = Math.max(1, Math.min(parseInt(args.apiChunk, 10) || 40, 100))
     await persistConfig()
     return { config: maskConfig(config) }
   }
@@ -1510,8 +1567,8 @@ export function apply(ctx) {
   }))
 
   registerTool('hanhua_scan', '扫描游戏项目目录，列出可汉化的文本资源文件：JSON/CSV/TSV/PO/TXT/INI/YAML/RenPy，RPG Maker MV/MZ，RPG Maker XP/VX/VX Ace/mkxp-z（.rxdata/.rvdata/.rvdata2 Ruby Marshal），krkr/KAG（.ks/.tjs/.scn）。返回文件清单，供 hanhua_parse 使用。', { root: { type: 'string', description: '项目根目录，绝对路径或相对当前根目录；缺省用上次配置' } }, [], async (args) => scanRoot(args && args.root))
-  registerTool('hanhua_parse', '解析扫描到的游戏文本文件，提取全部可翻译字符串：含 RPG Maker MV/MZ 事件、RGSS 家族（XP/VX/Ace）地图事件/数据库/System 术语/公共事件、krkr/KAG 文本（自动识别 UTF-16LE/UTF-8/Shift-JIS/GBK 编码）。失败的文件会列在 errors 中。', { files: { type: 'array', items: { type: 'string' }, description: '只解析指定文件（相对路径列表）；缺省解析上次扫描结果' }, root: { type: 'string', description: '项目根目录覆盖' } }, [], async (args) => parseFiles((args && args.files) || null, args && args.root))
-  registerTool('hanhua_translate', '翻译已解析条目：先查词典/术语表与翻译缓存；词典未覆盖的英文文本批量调用在线翻译 API（需先 hanhua_config 配置 apiUrl/apiKey）。返回译文预览与 QA 统计（占位符/换行/长度等）。', { ids: { type: 'array', items: { type: 'string' }, description: '只翻译指定条目 id' }, limit: { type: 'number', description: '最多翻译条目数，默认 500' }, forceApi: { type: 'boolean', description: '跳过词典与缓存，全部走在线 API' } }, [], async (args) => translateEntries(args || {}))
+  registerTool('hanhua_parse', '解析扫描到的游戏文本文件，提取全部可翻译字符串：含 RPG Maker MV/MZ 事件、RGSS 家族（XP/VX/Ace）地图事件/数据库/System 术语/公共事件、krkr/KAG 文本（自动识别 UTF-16LE/UTF-8/Shift-JIS/GBK 编码）。失败的文件会列在 errors 中。返回 perFile（每文件条目数）与最多 20 条紧凑预览，节省上下文 token。', { files: { type: 'array', items: { type: 'string' }, description: '只解析指定文件（相对路径列表）；缺省解析上次扫描结果' }, root: { type: 'string', description: '项目根目录覆盖' } }, [], async (args) => parseFiles((args && args.files) || null, args && args.root))
+  registerTool('hanhua_translate', '翻译已解析条目：先查词典/术语表与翻译缓存；词典未覆盖的文本批量调用在线翻译 API（需先 hanhua_config 配置 apiUrl/apiKey）。为节省 token：自动跳过无需翻译的条目（无字母或已含大量中日韩字符）、按原文+语境去重复用译文、按 apiChunk 分批并带语境标签压缩提示词。返回 QA 统计与最多 20 条有实际变更的预览。', { ids: { type: 'array', items: { type: 'string' }, description: '只翻译指定条目 id' }, limit: { type: 'number', description: '最多翻译条目数，默认 500' }, forceApi: { type: 'boolean', description: '跳过词典与缓存，全部走在线 API' } }, [], async (args) => translateEntries(args || {}))
   registerTool('hanhua_qa', '对当前译文做质检：占位符（%s/{0}/\\N[1]/<tag> 等）、换行数、首尾空格、长度比例、漏译检测，返回问题清单。', { ids: { type: 'array', items: { type: 'string' }, description: '只检查指定条目 id' } }, [], async (args) => {
     await loadMeta()
     let pool = state.translated
@@ -1526,12 +1583,12 @@ export function apply(ctx) {
   })
   registerTool('hanhua_glossary', '管理汉化词典/术语表（action: list/add/remove/reset）。词典优先级最高：完全匹配 > 子串最长优先 > 正则替换，之后才是在线 API。', { action: { type: 'string', enum: ['list', 'add', 'remove', 'reset'] }, source: { type: 'string', description: '原文或正则（regex=true 时）' }, target: { type: 'string', description: '译文' }, regex: { type: 'boolean', description: 'source 是否按正则解释' }, note: { type: 'string' }, index: { type: 'number', description: 'remove 用的列表下标' } }, ['action'], async (args) => glossaryAction(args || {}))
   registerTool('hanhua_export', '把译文写回游戏文件。mode=inplace 就地替换（自动备份 <file>.bak，默认且推荐）；mode=out 输出到 .hanhua-out/ 镜像目录。RGSS Marshal 与 krkr 文件按原编码/原格式二进制回写。', { mode: { type: 'string', enum: ['inplace', 'out'], description: 'inplace（默认）或 out' }, files: { type: 'array', items: { type: 'string' }, description: '只导出指定文件' } }, [], async (args) => exportEntries(args || {}))
-  registerTool('hanhua_config', '读取/修改汉化引擎配置：root（项目根目录）、apiUrl（OpenAI 兼容 chat/completions 接口地址）、apiKey、model、targetLang、sourceLang、rgssEncoding（XP/VX/Ace 字符串编码，默认 auto）、krkrEncoding（krkr 文本编码，默认 auto）、iconvPath（iconv-lite 绝对路径，用于 GBK/Shift-JIS 写回，未配置时尝试 node 全局解析）。get 会遮蔽 apiKey。', { action: { type: 'string', enum: ['get', 'set'] }, root: { type: 'string' }, apiUrl: { type: 'string' }, apiKey: { type: 'string' }, model: { type: 'string' }, targetLang: { type: 'string' }, sourceLang: { type: 'string' }, rgssEncoding: { type: 'string' }, krkrEncoding: { type: 'string' }, iconvPath: { type: 'string' } }, ['action'], async (args) => configAction(args || {}))
+  registerTool('hanhua_config', '读取/修改汉化引擎配置：root（项目根目录）、apiUrl（OpenAI 兼容 chat/completions 接口地址）、apiKey、model、targetLang、sourceLang、rgssEncoding（XP/VX/Ace 字符串编码，默认 auto）、krkrEncoding（krkr 文本编码，默认 auto）、iconvPath（iconv-lite 绝对路径，用于 GBK/Shift-JIS 写回，未配置时尝试 node 全局解析）、apiChunk（API 每批条数，默认 40，越大越省提示词开销）。get 会遮蔽 apiKey。', { action: { type: 'string', enum: ['get', 'set'] }, root: { type: 'string' }, apiUrl: { type: 'string' }, apiKey: { type: 'string' }, model: { type: 'string' }, targetLang: { type: 'string' }, sourceLang: { type: 'string' }, rgssEncoding: { type: 'string' }, krkrEncoding: { type: 'string' }, iconvPath: { type: 'string' }, apiChunk: { type: 'number', description: 'API 每批条数（默认 40，范围 1-100）' } }, ['action'], async (args) => configAction(args || {}))
 
   // ---------- 提示片段：汉化工作流指南 ----------
   ctx.effect(() => ctx.systemPrompt.section({
     name: 'tool:hanhua',
     order: 115,
-    text: '汉化引擎工具指南（hanhua_*）：\n- 支持引擎：RPG Maker MV/MZ（JSON）、RPG Maker XP/VX/VX Ace/mkxp-z（.rxdata/.rvdata/.rvdata2 Ruby Marshal）、krkr/KAG（.ks/.tjs/.scn，UTF-16LE/Shift-JIS/GBK）、通用 JSON/CSV/PO/INI/YAML/RenPy。\n- 标准流程：hanhua_scan 扫描 → hanhua_parse 提取文本（errors 字段列出失败文件）→ hanhua_glossary 维护术语词典（人名/地名/道具名必须统一）→ hanhua_translate 翻译 → hanhua_qa 质检 → hanhua_export 写回。\n- 词典/术语表优先级最高（完全匹配 > 子串最长优先 > 正则替换），词典未覆盖的文本才会调用在线翻译 API（需先 hanhua_config 配置 apiUrl/apiKey）。\n- 导出：mode=inplace 就地替换并自动生成 <file>.bak 备份（推荐）；mode=out 输出到 .hanhua-out/ 镜像目录；RGSS Marshal 与 krkr 文件按原编码二进制回写。\n- 编码：XP/VX/Ace 游戏多为 GBK/Shift-JIS 字符串，如乱码请用 hanhua_config 设置 rgssEncoding（gbk/shift_jis）；krkr 文本同理设置 krkrEncoding；GBK/Shift-JIS 写回依赖 iconv-lite，机器上不可用时设置 iconvPath。\n- 铁律：绝不破坏占位符（%s %d {0} \\N[1] \\V[5] \\C[2] <color=...> 等）、换行与 JSON/Marshal 结构；翻译后用 hanhua_qa 复查。',
+    text: '汉化引擎工具指南（hanhua_*）：\n- 支持引擎：RPG Maker MV/MZ（JSON）、RPG Maker XP/VX/VX Ace/mkxp-z（.rxdata/.rvdata/.rvdata2 Ruby Marshal）、krkr/KAG（.ks/.tjs/.scn，UTF-16LE/Shift-JIS/GBK）、通用 JSON/CSV/PO/INI/YAML/RenPy。\n- 标准流程：hanhua_scan 扫描 → hanhua_parse 提取文本（errors 字段列出失败文件）→ hanhua_glossary 维护术语词典（人名/地名/道具名必须统一）→ hanhua_translate 翻译 → hanhua_qa 质检 → hanhua_export 写回。\n- 词典/术语表优先级最高（完全匹配 > 子串最长优先 > 正则替换），词典未覆盖的文本才会调用在线翻译 API（需先 hanhua_config 配置 apiUrl/apiKey）。\n- 导出：mode=inplace 就地替换并自动生成 <file>.bak 备份（推荐）；mode=out 输出到 .hanhua-out/ 镜像目录；RGSS Marshal 与 krkr 文件按原编码二进制回写。\n- 编码：XP/VX/Ace 游戏多为 GBK/Shift-JIS 字符串，如乱码请用 hanhua_config 设置 rgssEncoding（gbk/shift_jis）；krkr 文本同理设置 krkrEncoding；GBK/Shift-JIS 写回依赖 iconv-lite，机器上不可用时设置 iconvPath。\n- 铁律：绝不破坏占位符（%s %d {0} \\N[1] \\V[5] \\C[2] <color=...> 等）、换行与 JSON/Marshal 结构；翻译后用 hanhua_qa 复查。\n- 省 token：翻译自动跳过无字母/高中日韩占比条目、按原文+语境去重、按 apiChunk 分批；parse/translate 只返回紧凑预览（≤20 条）。',
   }))
 }

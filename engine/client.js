@@ -1,4 +1,4 @@
-// 汉化引擎 Client 半（汉化工作台面板），v7
+// 汉化引擎 Client 半（汉化工作台面板），v8
 // 注册：设置页「汉化工作台」(settings.section) + cordis_run 卡快捷面板 (tool.view.cordis key=self)
 // 本文件同时是 GitHub 仓库 engine/client.js 的源码成品。
 
@@ -55,7 +55,7 @@ return {
 
       const saveConfig = () => {
         if (!cfg) return
-        const payload = { root: cfg.root, apiUrl: cfg.apiUrl, model: cfg.model, targetLang: cfg.targetLang, sourceLang: cfg.sourceLang, rgssEncoding: cfg.rgssEncoding, krkrEncoding: cfg.krkrEncoding, iconvPath: cfg.iconvPath }
+        const payload = { root: cfg.root, apiUrl: cfg.apiUrl, model: cfg.model, targetLang: cfg.targetLang, sourceLang: cfg.sourceLang, rgssEncoding: cfg.rgssEncoding, krkrEncoding: cfg.krkrEncoding, iconvPath: cfg.iconvPath, apiChunk: parseInt(cfg.apiChunk, 10) || 40 }
         if (keyInput) payload.apiKey = keyInput
         run('\u4fdd\u5b58\u914d\u7f6e', () => host.call('workbench.config.set', payload), () => setKeyInput(''))
       }
@@ -82,6 +82,7 @@ return {
             h(Row, null, h('label', { className: 'hb-label' }, '\u76ee\u6807\u8bed\u8a00'), h(Input, { value: cfg.targetLang || '', onChange: (v) => setCfg(Object.assign({}, cfg, { targetLang: v })) })),
             h(Row, null, h('label', { className: 'hb-label' }, 'RGSS \u7f16\u7801'), h(Input, { value: cfg.rgssEncoding || '', placeholder: 'auto / gbk / shift_jis / utf-8', onChange: (v) => setCfg(Object.assign({}, cfg, { rgssEncoding: v })) })),
             h(Row, null, h('label', { className: 'hb-label' }, 'krkr \u7f16\u7801'), h(Input, { value: cfg.krkrEncoding || '', placeholder: 'auto / gbk / shift_jis', onChange: (v) => setCfg(Object.assign({}, cfg, { krkrEncoding: v })) })),
+            h(Row, null, h('label', { className: 'hb-label' }, 'API \u6bcf\u6279\u6761\u6570'), h(Input, { value: cfg.apiChunk !== undefined && cfg.apiChunk !== null ? String(cfg.apiChunk) : '40', placeholder: '40\uff08\u8d8a\u5927\u8d8a\u7701\u63d0\u793a\u8bcd token\uff09', onChange: (v) => setCfg(Object.assign({}, cfg, { apiChunk: v })) })),
             h(Row, null, h('label', { className: 'hb-label' }, 'iconv \u8def\u5f84'), h(Input, { value: cfg.iconvPath || '', placeholder: 'iconv-lite \u7edd\u5bf9\u8def\u5f84', onChange: (v) => setCfg(Object.assign({}, cfg, { iconvPath: v })) })),
             h(Btn, { label: '\u4fdd\u5b58\u914d\u7f6e', disabled: busy, onClick: saveConfig })) : h('div', null, '\u52a0\u8f7d\u4e2d\u2026')),
         h(Card, { title: '\u8bcd\u5178 / \u672f\u8bed\u8868 (' + gloss.length + ')' },

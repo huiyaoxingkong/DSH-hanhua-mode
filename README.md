@@ -40,6 +40,17 @@ hanhua_scan 扫描项目
 | `rgssEncoding` | RGSS 字符串编码（`auto`/`utf-8`/`gbk`/`shift_jis`），默认 `auto` |
 | `krkrEncoding` | krkr 文本编码，默认 `auto` |
 | `iconvPath` | iconv-lite 绝对路径，用于 GBK/Shift-JIS 写回；不设置时尝试 node 全局解析 |
+| `apiChunk` | 在线 API 每批条数（默认 40，范围 1-100）；越大越省提示词开销 |
+
+## Token 优化
+
+在保证翻译符合语境的前提下尽量少消耗 token（在线 API token 与对话上下文 token）：
+
+- **智能过滤**：无字母（纯数字/符号）或中日韩字符占比 ≥ 50% 的条目直接跳过（method=`skip`），不产生 API 调用
+- **语境去重**：相同原文 + 相同语境只翻译一次，其余条目复用首条译文
+- **语境标签压缩提示词**：API 请求按紧凑的 `[语境, 原文]` 对发送（名称/选项/地图对话/剧本对话/系统术语等）
+- **分批**：按 `apiChunk` 分批调用，单次提示词开销可控
+- **紧凑预览**：`hanhua_parse`/`hanhua_translate` 只返回 ≤20 条预览 + perFile 统计，翻译预览仅含有实际变更的条目，节省对话上下文
 
 ## 目录结构
 
