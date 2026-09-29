@@ -1,0 +1,20 @@
+# 统一换行：产物由 build-engine.mjs 生成（LF），若 checkout 时被转成 CRLF，
+# `node tools/build-engine.mjs --check` 会误报不一致。
+* text=auto eol=lf
+
+# 二进制：不要做任何文本转换
+*.zip binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.gif binary
+*.bin binary
+*.rxdata binary
+*.rvdata binary
+*.rvdata2 binary
+*.exe binary
+*.node binary
+*.ttf binary
+*.ttc binary
+*.pyc binary

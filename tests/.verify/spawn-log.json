@@ -1,0 +1,152 @@
+[
+  {
+    "file": "D:\\Agent-windows\\DeepSeekHarness\\runtime\\node.exe",
+    "hasCwd": true,
+    "cwd": "D:\\Games\\汉化模式\\DSH-hanhua-mode\\tests\\.verify\\work-subst\\project",
+    "argvAfterEval": [
+      "D:\\Games\\汉化模式\\DSH-hanhua-mode\\tests\\.verify\\work-subst\\project\\game_krkr\\scenario\\first.ks.bak",
+      "//47ACAAcwBjAGUAbgBhAHIAaQBvACAAbwBuAGUADQAKAFsAdABpAHQAbABlACAAbgBhAG0AZQA9ACIAUAByAG8AbABvAGcAdQBlACIAXQANAAoARwBvAG8AZAAgAG0AbwByAG4AaQBuAGcAIQAgAFQAaABlACAAUQB1AGUAcwB0ACAAYgBlAGcAaQBuAHMAIABuAG8AdwAuAA0ACgBbAGMAaAAgAHQAZQB4AHQAPQAiAE4AaQBjAGUAIAB0AG8AIABtAGUAZQB0ACAAeQBvAHUALgAiAF0ADQAKAEIAeQBlACAAYgB5AGUALgANAAoA"
+    ],
+    "scriptHead": "const fs=require(\"fs\");const pt=require(\"path\");try{fs.mkdirSync(pt.di",
+    "env": null,
+    "graceMs": 60000,
+    "exitCode": 0
+  },
+  {
+    "file": "D:\\Agent-windows\\DeepSeekHarness\\runtime\\node.exe",
+    "hasCwd": true,
+    "cwd": "D:\\Games\\汉化模式\\DSH-hanhua-mode\\tests\\.verify\\work-subst\\project",
+    "argvAfterEval": [
+      "D:\\Games\\汉化模式\\DSH-hanhua-mode\\tests\\.verify\\work-subst\\project\\game_krkr\\scenario\\first.ks",
+      "//47ACAAcwBjAGUAbgBhAHIAaQBvACAAbwBuAGUADQAKAFsAdABpAHQAbABlACAAbgBhAG0AZQA9ACIAUAByAG8AbABvAGcAdQBlACIAXQANAAoARwBvAG8AZAAgAG0AbwByAG4AaQBuAGcAIQAgAFQAaABlACAA+06hUiAAYgBlAGcAaQBuAHMAIABuAG8AdwAuAA0ACgBbAGMAaAAgAHQAZQB4AHQAPQAiAE4AaQBjAGUAIAB0AG8AIABtAGUAZQB0ACAAeQBvAHUALgAiAF0ADQAKAEIAeQBlACAAYgB5AGUALgANAAoA"
+    ],
+    "scriptHead": "const fs=require(\"fs\");const pt=require(\"path\");try{fs.mkdirSync(pt.di",
+    "env": null,
+    "graceMs": 60000,
+    "exitCode": 0
+  },
+  {
+    "file": "D:\\Agent-windows\\DeepSeekHarness\\runtime\\node.exe",
+    "hasCwd": true,
+    "cwd": "D:\\Games\\汉化模式\\DSH-hanhua-mode\\tests\\.verify\\work-subst\\project",
+    "argvAfterEval": [
+      "D:\\Games\\汉化模式\\DSH-hanhua-mode\\tests\\.verify\\work-subst\\project\\game_krkr\\scenario\\legacy.ks.bak",
+      "W3RpdGxlIG5hbWU9IoOMg0uDVoFbIl0NCoKxgvGCyYK/gs2BQZCiikWBQg0KW2NoIHRleHQ9IoLNgraC34LcgrWCxIFCIl0NCg=="
+    ],
+    "scriptHead": "const fs=require(\"fs\");const pt=require(\"path\");try{fs.mkdirSync(pt.di",
+    "env": null,
+    "graceMs": 60000,
+    "exitCode": 0
+  },
+  {
+    "file": "D:\\Agent-windows\\DeepSeekHarness\\runtime\\node.exe",
+    "hasCwd": true,
+    "cwd": "D:\\Games\\汉化模式\\DSH-hanhua-mode\\tests\\.verify\\work-subst\\project",
+    "argvAfterEval": [
+      "D:\\Games\\汉化模式\\DSH-hanhua-mode\\tests\\.verify\\work-subst\\project\\game_krkr\\scenario\\legacy.ks",
+      "W3RpdGxlIG5hbWU9IuODrOOCrOOCt+ODvCJdDQrkvaDlpb3vvIzkuJbnlYzjgIINCltjaCB0ZXh0PSLjga/jgZjjgoHjgb7jgZfjgabjgIIiXQ0K",
+      "shift_jis",
+      "[\"D:\\\\Agent-windows\\\\DeepSeekHarness\\\\data\\\\.dsh/profiles/node_modules/iconv-lite\",\"D:\\\\Agent-windows\\\\DeepSeekHarness\\\\data\\\\.dsh/profiles/web/node_modules/iconv-lite\",\"iconv-lite\"]"
+    ],
+    "scriptHead": "const fs=require(\"fs\");const pt=require(\"path\");let i=null;for(const s",
+    "env": {
+      "NODE_PATH": "D:\\Agent-windows\\DeepSeekHarness\\data\\.dsh/profiles/node_modules;D:\\Agent-windows\\DeepSeekHarness\\data\\.dsh/profiles/web/node_modules"
+    },
+    "graceMs": 60000,
+    "exitCode": 0
+  },
+  {
+    "file": "D:\\Agent-windows\\DeepSeekHarness\\runtime\\node.exe",
+    "hasCwd": true,
+    "cwd": "D:\\Games\\汉化模式\\DSH-hanhua-mode\\tests\\.verify\\work-subst\\project",
+    "argvAfterEval": [
+      "D:\\Games\\汉化模式\\DSH-hanhua-mode\\tests\\.verify\\work-subst\\project\\game_xp\\Data\\Map001.rxdata.bak",
+      "BAhvOg1SUEc6Ok1hcAY6DEBldmVudHN7BmkGbzoPUlBHOjpFdmVudAc6CkBuYW1lIgxPbGQgTWFuOgtAcGFnZXNbBm86FVJQRzo6RXZlbnQ6OlBhZ2UHOg9AY29uZGl0aW9ubzogUlBHOjpFdmVudDo6UGFnZTo6Q29uZGl0aW9uADoKQGxpc3RbCm86FlJQRzo6RXZlbnRDb21tYW5kCDoKQGNvZGVpajoMQGluZGVudGkAOhBAcGFyYW1ldGVyc1sGWwciF0hlbGxvLCBhZHZlbnR1cmVyISIcV2VsY29tZSB0byB0aGUgVmlsbGFnZS5vOhZSUEc6OkV2ZW50Q29tbWFuZAg6CkBjb2RlaQSRAQAAOgxAaW5kZW50aQA6EEBwYXJhbWV0ZXJzWwYiHEkgYW0gdGhlIFZpbGxhZ2UgRWxkZXIubzoWUlBHOjpFdmVudENvbW1hbmQIOgpAY29kZWlrOgxAaW5kZW50aQA6EEBwYXJhbWV0ZXJzWwdbByIIWWVzIgdOb2kAbzoWUlBHOjpFdmVudENvbW1hbmQIOgpAY29kZWkEkgEAADoMQGluZGVudGkAOhBAcGFyYW1ldGVyc1sHaQAiDVdoZW4gWWVzbzoWUlBHOjpFdmVudENvbW1hbmQIOgpAY29kZWkEmAEAADoMQGluZGVudGkAOhBAcGFyYW1ldGVyc1sGIhRBIGNvbW1lbnQgbGluZS4="
+    ],
+    "scriptHead": "const fs=require(\"fs\");const pt=require(\"path\");try{fs.mkdirSync(pt.di",
+    "env": null,
+    "graceMs": 60000,
+    "exitCode": 0
+  },
+  {
+    "file": "D:\\Agent-windows\\DeepSeekHarness\\runtime\\node.exe",
+    "hasCwd": true,
+    "cwd": "D:\\Games\\汉化模式\\DSH-hanhua-mode\\tests\\.verify\\work-subst\\project",
+    "argvAfterEval": [
+      "D:\\Games\\汉化模式\\DSH-hanhua-mode\\tests\\.verify\\work-subst\\project\\game_xp\\Data\\Map001.rxdata",
+      "BAhvOg1SUEc6Ok1hcAY6DEBldmVudHN7BmkGbzoPUlBHOjpFdmVudAc6CkBuYW1lIgxPbGQgTWFuOgtAcGFnZXNbBm86FVJQRzo6RXZlbnQ6OlBhZ2UHOg9AY29uZGl0aW9ubzogUlBHOjpFdmVudDo6UGFnZTo6Q29uZGl0aW9uADoKQGxpc3RbCm86FlJQRzo6RXZlbnRDb21tYW5kCDoKQGNvZGVpajoMQGluZGVudGkAOhBAcGFyYW1ldGVyc1sGWwciF0hlbGxvLCBhZHZlbnR1cmVyISIbV2VsY29tZSB0byB0aGUg5p2R5bqELm86FlJQRzo6RXZlbnRDb21tYW5kCDoKQGNvZGVpBJEBAAA6DEBpbmRlbnRpADoQQHBhcmFtZXRlcnNbBiIbSSBhbSB0aGUg5p2R5bqEIEVsZGVyLm86FlJQRzo6RXZlbnRDb21tYW5kCDoKQGNvZGVpazoMQGluZGVudGkAOhBAcGFyYW1ldGVyc1sHWwciCOaYryII5ZCmaQBvOhZSUEc6OkV2ZW50Q29tbWFuZAg6CkBjb2RlaQSSAQAAOgxAaW5kZW50aQA6EEBwYXJhbWV0ZXJzWwdpACINV2hlbiDmmK9vOhZSUEc6OkV2ZW50Q29tbWFuZAg6CkBjb2RlaQSYAQAAOgxAaW5kZW50aQA6EEBwYXJhbWV0ZXJzWwYiFEEgY29tbWVudCBsaW5lLg=="
+    ],
+    "scriptHead": "const fs=require(\"fs\");const pt=require(\"path\");try{fs.mkdirSync(pt.di",
+    "env": null,
+    "graceMs": 60000,
+    "exitCode": 0
+  },
+  {
+    "file": "D:\\Agent-windows\\DeepSeekHarness\\runtime\\node.exe",
+    "hasCwd": true,
+    "cwd": "D:\\Games\\汉化模式\\DSH-hanhua-mode\\tests\\.verify\\work-subst\\project",
+    "argvAfterEval": [
+      "D:\\Games\\汉化模式\\DSH-hanhua-mode\\tests\\.verify\\work-subst\\project\\.hanhua-iconv.in.json",
+      "D:\\Games\\汉化模式\\DSH-hanhua-mode\\tests\\.verify\\work-subst\\project\\.hanhua-iconv.bin",
+      "[\"D:\\\\Agent-windows\\\\DeepSeekHarness\\\\data\\\\.dsh/profiles/node_modules/iconv-lite\",\"D:\\\\Agent-windows\\\\DeepSeekHarness\\\\data\\\\.dsh/profiles/web/node_modules/iconv-lite\",\"iconv-lite\"]"
+    ],
+    "scriptHead": "const fs=require(\"fs\");let i=null;for(const s of JSON.parse(process.ar",
+    "env": {
+      "NODE_PATH": "D:\\Agent-windows\\DeepSeekHarness\\data\\.dsh/profiles/node_modules;D:\\Agent-windows\\DeepSeekHarness\\data\\.dsh/profiles/web/node_modules"
+    },
+    "graceMs": 60000,
+    "exitCode": 0
+  },
+  {
+    "file": "D:\\Agent-windows\\DeepSeekHarness\\runtime\\node.exe",
+    "hasCwd": true,
+    "cwd": "D:\\Games\\汉化模式\\DSH-hanhua-mode\\tests\\.verify\\work-subst\\project",
+    "argvAfterEval": [
+      "D:\\Games\\汉化模式\\DSH-hanhua-mode\\tests\\.verify\\work-subst\\project\\game_xp\\Data\\Map002.rxdata.bak",
+      "BAhvOg1SUEc6Ok1hcAY6DEBldmVudHN7BmkGbzoPUlBHOjpFdmVudAc6CkBuYW1lIg+DQYOMg5OCzEhQOgtAcGFnZXNbBm86FVJQRzo6RXZlbnQ6OlBhZ2UHOg9AY29uZGl0aW9ubzogUlBHOjpFdmVudDo6UGFnZTo6Q29uZGl0aW9uADoKQGxpc3RbCm86FlJQRzo6RXZlbnRDb21tYW5kCDoKQGNvZGVpajoMQGluZGVudGkAOhBAcGFyYW1ldGVyc1sGWwciD5dFjtKDQYOMg5MiFYLmgqSCsYK7gUGRuoLWgUJvOhZSUEc6OkV2ZW50Q29tbWFuZAg6CkBjb2RlaQSRAQAAOgxAaW5kZW50aQA6EEBwYXJhbWV0ZXJzWwYiGYKxgvGCyYK/gs2BQZe3kGyC5oFCbzoWUlBHOjpFdmVudENvbW1hbmQIOgpAY29kZWlrOgxAaW5kZW50aQA6EEBwYXJhbWV0ZXJzWwdbByIIWWVzIgdOb2kAbzoWUlBHOjpFdmVudENvbW1hbmQIOgpAY29kZWkEkgEAADoMQGluZGVudGkAOhBAcGFyYW1ldGVyc1sHaQAiDVdoZW4gWWVzbzoWUlBHOjpFdmVudENvbW1hbmQIOgpAY29kZWkEmAEAADoMQGluZGVudGkAOhBAcGFyYW1ldGVyc1sGIhWCsYLqgs2DUoOBg5ODZ4FC"
+    ],
+    "scriptHead": "const fs=require(\"fs\");const pt=require(\"path\");try{fs.mkdirSync(pt.di",
+    "env": null,
+    "graceMs": 60000,
+    "exitCode": 0
+  },
+  {
+    "file": "D:\\Agent-windows\\DeepSeekHarness\\runtime\\node.exe",
+    "hasCwd": true,
+    "cwd": "D:\\Games\\汉化模式\\DSH-hanhua-mode\\tests\\.verify\\work-subst\\project",
+    "argvAfterEval": [
+      "D:\\Games\\汉化模式\\DSH-hanhua-mode\\tests\\.verify\\work-subst\\project\\game_xp\\Data\\Map002.rxdata",
+      "BAhvOg1SUEc6Ok1hcAY6DEBldmVudHN7BmkGbzoPUlBHOjpFdmVudAc6CkBuYW1lIgyIoj+TSUhQOgtAcGFnZXNbBm86FVJQRzo6RXZlbnQ6OlBhZ2UHOg9AY29uZGl0aW9ubzogUlBHOjpFdmVudDo6UGFnZTo6Q29uZGl0aW9uADoKQGxpc3RbCm86FlJQRzo6RXZlbnRDb21tYW5kCDoKQGNvZGVpajoMQGluZGVudGkAOhBAcGFyYW1ldGVyc1sGWwciDJdFjtKIoj8iEj+MfZeIk56Ruo5xgUJvOhZSUEc6OkV2ZW50Q29tbWFuZAg6CkBjb2RlaQSRAQAAOgxAaW5kZW50aQA6EEBwYXJhbWV0ZXJzWwYiED+NRIFDl7eQbIFCbzoWUlBHOjpFdmVudENvbW1hbmQIOgpAY29kZWlrOgxAaW5kZW50aQA6EEBwYXJhbWV0ZXJzWwdbByII5pivIgjlkKZpAG86FlJQRzo6RXZlbnRDb21tYW5kCDoKQGNvZGVpBJIBAAA6DEBpbmRlbnRpADoQQHBhcmFtZXRlcnNbB2kAIg1XaGVuIOaYr286FlJQRzo6RXZlbnRDb21tYW5kCDoKQGNvZGVpBJgBAAA6DEBpbmRlbnRpADoQQHBhcmFtZXRlcnNbBiIRP5CliOqP8JKNP4FC"
+    ],
+    "scriptHead": "const fs=require(\"fs\");const pt=require(\"path\");try{fs.mkdirSync(pt.di",
+    "env": null,
+    "graceMs": 60000,
+    "exitCode": 0
+  },
+  {
+    "file": "D:\\Agent-windows\\DeepSeekHarness\\runtime\\node.exe",
+    "hasCwd": true,
+    "cwd": "D:\\Games\\汉化模式\\DSH-hanhua-mode\\tests\\.verify\\work-subst\\project",
+    "argvAfterEval": [
+      "D:\\Games\\汉化模式\\DSH-hanhua-mode\\tests\\.verify\\work-subst\\project\\game_xp\\Data\\System.rxdata.bak",
+      "BAhvOhBSUEc6OlN5c3RlbQg6EEBnYW1lX3RpdGxlIhNUZXN0IEFkdmVudHVyZToTQGN1cnJlbmN5X3VuaXQiCUdvbGQ6C0B0ZXJtc286F1JQRzo6U3lzdGVtOjpUZXJtcwk6C0BiYXNpY1sHIgpMZXZlbCIHSFA6DEBwYXJhbXNbADoOQGNvbW1hbmRzWwciC0F0dGFjayIKR3VhcmQ6DkBtZXNzYWdlc3sHOgx2aWN0b3J5bzoXUlBHOjpTeXN0ZW06OldvcmRzBjoKQG5hbWUiDVZpY3RvcnkhOgtkZWZlYXRvOhdSUEc6OlN5c3RlbTo6V29yZHMGOgpAbmFtZSIORGVmZWF0Li4u"
+    ],
+    "scriptHead": "const fs=require(\"fs\");const pt=require(\"path\");try{fs.mkdirSync(pt.di",
+    "env": null,
+    "graceMs": 60000,
+    "exitCode": 0
+  },
+  {
+    "file": "D:\\Agent-windows\\DeepSeekHarness\\runtime\\node.exe",
+    "hasCwd": true,
+    "cwd": "D:\\Games\\汉化模式\\DSH-hanhua-mode\\tests\\.verify\\work-subst\\project",
+    "argvAfterEval": [
+      "D:\\Games\\汉化模式\\DSH-hanhua-mode\\tests\\.verify\\work-subst\\project\\game_xp\\Data\\System.rxdata",
+      "BAhvOhBSUEc6OlN5c3RlbQg6EEBnYW1lX3RpdGxlIhNUZXN0IEFkdmVudHVyZToTQGN1cnJlbmN5X3VuaXQiC+mHkeW4gToLQHRlcm1zbzoXUlBHOjpTeXN0ZW06OlRlcm1zCToLQGJhc2ljWwciC+etiee6pyIO55Sf5ZG95YC8OgxAcGFyYW1zWwA6DkBjb21tYW5kc1sHIgvmlLvlh7siCkd1YXJkOg5AbWVzc2FnZXN7BzoMdmljdG9yeW86F1JQRzo6U3lzdGVtOjpXb3JkcwY6CkBuYW1lIgzog5zliKkhOgtkZWZlYXRvOhdSUEc6OlN5c3RlbTo6V29yZHMGOgpAbmFtZSIO5oiY6LSlLi4u"
+    ],
+    "scriptHead": "const fs=require(\"fs\");const pt=require(\"path\");try{fs.mkdirSync(pt.di",
+    "env": null,
+    "graceMs": 60000,
+    "exitCode": 0
+  }
+]

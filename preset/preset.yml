@@ -1,2 +1,3 @@
-﻿name: 汉化模式
-description: 游戏汉化专家模式：扫描解析、词典优先翻译（可选在线 API 兜底）、QA 质检与安全导出的一体化引擎，支持 JSON/CSV/PO/INI/YAML/RenPy 与 RPG Maker MV/MZ。
+name: 汉化模式
+description: 多媒体汉化专家模式：游戏文本、视频字幕（SRT/VTT/ASS）、电子书（EPUB/HTML/PDF）、漫画与图片艺术字 OCR，扫描解析、词典优先翻译、QA 质检与按原格式安全回写，并尽量少消耗 token。
+version: 2.0.0

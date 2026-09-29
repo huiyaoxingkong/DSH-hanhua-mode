@@ -24,8 +24,9 @@
 - id: persona
   name: '@deepseek-ai/dsh-persona'
   config:
-    text: >-
-      你是「汉化模式」游戏本地化专家 Agent，由 {{model}} 驱动。工作目录 {{cwd}} 是游戏汉化项目根目录。核心流程：hanhua_scan 扫描项目 → hanhua_parse 提取全部文本 → hanhua_glossary 维护术语词典 → hanhua_translate 翻译（词典优先，可选在线 API 兜底）→ hanhua_qa 质检 → hanhua_export 写回（自动 .bak 备份）。铁律：绝不破坏占位符（%s、{0}、\N[1]、\V[5]、<color> 等）、换行与 JSON 结构；术语全文统一；导出前确认备份已生成。
+    suffix: 工作目录 {{cwd}} 是游戏汉化项目根目录。先用 hanhua_scan/hanhua_parse 摸清文本，再动 hanhua_export 写回。
+    prefix: >-
+      你是「汉化模式」游戏本地化专家 Agent，由 {{model}} 驱动。核心流程：hanhua_scan 扫描项目 → hanhua_parse 提取全部文本 → hanhua_glossary 维护术语词典 → hanhua_translate 翻译（词典优先，可选在线 API 兜底）→ hanhua_qa 质检 → hanhua_export 写回（自动 .bak 备份）。铁律：绝不破坏占位符（%s、{0}、\N[1]、\V[5]、<color> 等）、换行与 JSON 结构；术语全文统一；导出前确认备份已生成。
 
 - id: agent-instructions
   name: '@deepseek-ai/dsh-agent-instructions'
@@ -88,12 +89,12 @@
 
 # ── goals ───────────────────────────────────────────────────────────────────
 
-# Only the model-facing tool. The goal SERVICE, its session driver, and the
-# `/goal` command stay on the host plane: the Gateway serves the goal domain as
-# Remote endpoints whose receiver comes from a generated descriptor, so it
-# resolves `goals` on the host and an entry-local realm here would hide it. The
-# registry is keyed by session anyway, so one host instance serves every
-# session. What a preset chooses is whether its agent can call the goal tool.
+# The goal service and session driver stay on the host plane, where the Gateway
+# can resolve them. The human command and model-facing tool register into this
+# preset's scoped layers.
+- id: command-goal
+  name: '@deepseek-ai/dsh-command-goal'
+
 - id: tool-goal
   name: '@deepseek-ai/dsh-tool-goal'
 
@@ -165,12 +166,6 @@
 # `workflows` is different — nothing outside an agent reads it — so every row
 # that reaches it shares one entry-local realm here, and a consumer left
 # outside would resolve a host registry this preset does not populate.
-#
-# `tool-subagent-report` is host-plane for the same reason as the registry,
-# not because a preset may not want it: it registers a CONTINUABLE SETUP on
-# that singleton rather than a tool this agent calls, and the setup list is
-# not scope-aware — one copy per mounted preset means every child gets
-# `report` registered once per live session, which throws on the second.
 - id: delegation
   name: cordis:group
   group: true
@@ -188,8 +183,13 @@
       config:
         provider: spawn
         toolName: subagent
+        modelSelectionSettings: true
         backgroundMode: continuable
 
+    # Fork omits model selection so provider/model stay equal to the parent and
+    # the inherited history remains eligible for KV Cache reuse. This preset
+    # keeps fork continuable; parent and child inherit the same messaging tool,
+    # while the parent id and return guidance follow the inherited history.
     - id: tool-subagent-fork
       name: '@deepseek-ai/dsh-tool-subagent'
       config:
@@ -219,16 +219,23 @@
         backgroundMode: one-shot
         maxDepth: provider-managed
 
-    - id: workflow-worker-thread
-      name: '@deepseek-ai/dsh-workflow-worker-thread'
+    - id: workflow-ptc
+      name: '@deepseek-ai/dsh-workflow-ptc'
       config:
         provider: spawn
 
     - id: tool-workflow
       name: '@deepseek-ai/dsh-tool-workflow'
 
+    # Off by default with the base row it mirrors: the tool description
+    # restricts `ralph` to runs the human explicitly asked for, and completion
+    # is a worker self-report, not an independent evaluation. Preset files take
+    # no patches, so a session that wants it duplicates this preset under a new
+    # id and drops `disabled`; the shipped root shadows a copy that reuses this
+    # id.
     - id: tool-ralph
       name: '@deepseek-ai/dsh-tool-ralph'
+      disabled: true
       config:
         subagentProvider: spawn
         maxRounds: 64
@@ -248,10 +255,17 @@
 - id: tool-web
   name: '@deepseek-ai/dsh-tool-web'
   config:
-    fetch: false
+    fetch: true
     searchTimeoutMs: 60000
 
+- id: present
+  name: '@deepseek-ai/dsh-tool-present'
+
+- id: tool-plugin-manager
+  name: '@deepseek-ai/dsh-plugin-manager/tools'
+  disabled: true
+
 # ── 汉化引擎（本地插件包） ─────────────────────────────────────────────
-# 消费 host 的 tools/systemPrompt/fs/web 服务，不提供任何服务，无需 isolate realm。
+# 消费 host 的 tools/systemPrompt/fs/web/sandboxPolicy/subprocess 服务，不提供任何服务，无需 isolate realm。
 - id: hanhua-engine
   name: ./plugins/hanhua/index.js
