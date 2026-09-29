@@ -92,15 +92,17 @@ async function main() {
   const repoInfo = await api('GET', `https://api.github.com/repos/${owner}/${REPO_NAME}`)
   if (repoInfo.status !== 200) { console.error('仓库不存在或无权访问:', repoInfo.error); process.exit(1) }
 
-  // 本地快照（只含 git 跟踪的文件）
-  const listed = git(['ls-files', '-z']).split('\0').filter(Boolean)
+  // 本地快照（只含 git 跟踪的文件）—— 文件模式必须取自 git 索引，
+  // 否则远端 tree 会与本地不一致（Windows 文件系统不保留可执行位）。
+  const staged = git(['ls-files', '-z', '--stage']).split('\0').filter(Boolean)
   const files = []
-  const localBlobs = new Map()
-  for (const rel of listed) {
+  for (const entry of staged) {
+    const tab = entry.indexOf('\t')
+    const meta = entry.slice(0, tab).split(' ')
+    const rel = entry.slice(tab + 1)
+    const mode = meta[0] === '100755' ? '100755' : '100644'
     const buf = readFileSync(join(REPO, rel))
-    const sha = blobSha(buf)
-    files.push({ rel, buf, sha })
-    localBlobs.set(rel, sha)
+    files.push({ rel, buf, mode, sha: blobSha(buf) })
   }
   const localTree = git(['rev-parse', 'HEAD^{tree}'])
   console.log(`本地：${files.length} 个跟踪文件，HEAD tree=${localTree.slice(0, 12)}`)
@@ -148,7 +150,7 @@ async function main() {
       sha = r.json.sha
       uploaded++
     }
-    tree.push({ path: f.rel, mode: /\.(sh|mjs|js|py|ps1)$/.test(f.rel) && (f.buf[0] === 0x23) ? '100755' : '100644', type: 'blob', sha })
+    tree.push({ path: f.rel, mode: f.mode, type: 'blob', sha })
   }
   console.log(`blob：上传 ${uploaded} 个，复用 ${files.length - uploaded} 个`)
 
