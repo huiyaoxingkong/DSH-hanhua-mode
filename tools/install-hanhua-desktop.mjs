@@ -118,7 +118,22 @@ if (startIdx >= 0) {
 } else {
   next = original.replace(/\s*$/, '\n') + '\n' + marked
 }
-writeFileSync(PROFILE_PATCH + '.hanhua-backup', original, 'utf8')
+// 回滚备份必须是「没有汉化块」的干净组合，而且只在**首次安装**时固定下来：
+// 否则重复运行会把已打补丁的内容当成备份，文档里的回滚步骤就再也删不掉汉化块了。
+const BACKUP = PROFILE_PATCH + '.hanhua-backup'
+const stripManagedBlock = (text) => {
+  const i = text.indexOf(MARK_START)
+  if (i < 0) return text
+  const j = text.indexOf(MARK_END, i)
+  return (text.slice(0, i) + (j >= 0 ? text.slice(j + MARK_END.length).replace(/^\s*/, '') : '')).replace(/\s*$/, '\n')
+}
+let backupText = original
+if (startIdx >= 0) {
+  backupText = stripManagedBlock(original)
+  const existing = existsSync(BACKUP) ? readFileSync(BACKUP, 'utf8') : null
+  if (existing !== null && existing.indexOf(MARK_START) < 0) backupText = existing   // 已有干净备份就不覆盖
+}
+writeFileSync(BACKUP, backupText, 'utf8')
 writeFileSync(PROFILE_PATCH, next, 'utf8')
-log(`profile patch 已更新（原文件备份为 ${PROFILE_PATCH}.hanhua-backup）`)
+log(`profile patch 已更新（干净回滚点：${BACKUP}${backupText.indexOf(MARK_START) < 0 ? ' ✅ 不含汉化块' : ' ⚠ 仍含汉化块'}）`)
 log('\n完成。重启 DeepSeek Harness 后，新建会话的预设列表里会出现「汉化模式」（11 个 hanhua_* 工具）。')
