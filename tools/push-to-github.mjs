@@ -92,20 +92,18 @@ async function main() {
   const repoInfo = await api('GET', `https://api.github.com/repos/${owner}/${REPO_NAME}`)
   if (repoInfo.status !== 200) { console.error('仓库不存在或无权访问:', repoInfo.error); process.exit(1) }
 
-  // 本地快照（只含 git 跟踪的文件）—— 文件模式必须取自 git 索引，
-  // 否则远端 tree 会与本地不一致（Windows 文件系统不保留可执行位）。
-  const staged = git(['ls-files', '-z', '--stage']).split('\0').filter(Boolean)
-  const files = []
-  for (const entry of staged) {
+  // 本地快照 = **HEAD 的 tree**（不是工作区内容）：
+  //   · 推送的语义就是「把提交推上去」，未提交的改动不该被带上；
+  //   · 直接复用 git 对象库里的 blob（`git cat-file`），避免行尾规范化差异
+  //     （工作区是 CRLF、仓库里是 LF 的文件会让 tree sha 对不上）。
+  const entries = git(['ls-tree', '-r', '-z', 'HEAD']).split('\0').filter(Boolean).map((entry) => {
     const tab = entry.indexOf('\t')
-    const meta = entry.slice(0, tab).split(' ')
-    const rel = entry.slice(tab + 1)
-    const mode = meta[0] === '100755' ? '100755' : '100644'
-    const buf = readFileSync(join(REPO, rel))
-    files.push({ rel, buf, mode, sha: blobSha(buf) })
-  }
+    const meta = entry.slice(0, tab).split(/ +/)
+    return { mode: meta[0].startsWith('100') ? meta[0] : '100644', type: meta[1], sha: meta[2], path: entry.slice(tab + 1) }
+  }).filter((e) => e.type === 'blob')
+  const files = entries.map((e) => Object.assign({}, e, { buf: execFileSync('git', ['cat-file', 'blob', e.sha], { cwd: REPO, maxBuffer: 256 * 1024 * 1024 }) }))
   const localTree = git(['rev-parse', 'HEAD^{tree}'])
-  console.log(`本地：${files.length} 个跟踪文件，HEAD tree=${localTree.slice(0, 12)}`)
+  console.log(`本地：HEAD tree=${localTree.slice(0, 12)}，${files.length} 个 blob`)
 
   // 远端现状
   let remoteCommit = null
@@ -132,25 +130,25 @@ async function main() {
   }
 
   if (DRY) {
-    const changed = files.filter((f) => existing.get(f.rel) !== f.sha)
+    const changed = files.filter((f) => existing.get(f.path) !== f.sha)
     console.log(`[dry] 需要上传 ${changed.length} 个 blob（共 ${files.length} 个文件）`)
-    for (const f of changed.slice(0, 20)) console.log('  ' + f.rel)
+    for (const f of changed.slice(0, 20)) console.log('  ' + f.path)
     if (changed.length > 20) console.log(`  … 其余 ${changed.length - 20} 个`)
     return
   }
 
-  // 上传变化的 blob
+  // 上传远端还没有的 blob
   const tree = []
   let uploaded = 0
   for (const f of files) {
-    let sha = existing.get(f.rel)
+    let sha = existing.get(f.path)
     if (sha !== f.sha) {
       const r = await api('POST', `https://api.github.com/repos/${owner}/${REPO_NAME}/git/blobs`, { content: f.buf.toString('base64'), encoding: 'base64' })
-      if (r.status !== 201) { console.error('blob 上传失败:', f.rel, r.error); process.exit(1) }
+      if (r.status !== 201) { console.error('blob 上传失败:', f.path, r.error); process.exit(1) }
       sha = r.json.sha
       uploaded++
     }
-    tree.push({ path: f.rel, mode: f.mode, type: 'blob', sha })
+    tree.push({ path: f.path, mode: f.mode, type: 'blob', sha })
   }
   console.log(`blob：上传 ${uploaded} 个，复用 ${files.length - uploaded} 个`)
 
