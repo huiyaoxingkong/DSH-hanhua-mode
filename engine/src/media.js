@@ -471,12 +471,33 @@ async function exportImageFile(rel, rs, entryById, args) {
   const isArchive = ['cbz', 'zip'].indexOf(ext) >= 0
   const destRel = args.mode === 'out' ? joinPath('.hanhua-out', rel) : rel
 
-  const buildOps = (list) => list.map((r) => {
-    const e = entryById[r.id]
-    const box = (e && e.loc && Array.isArray(e.loc.box)) ? e.loc.box : null
-    if (!box) return null
-    return { box, text: r.target, style: Object.assign({ erase: 'auto' }, fontPath ? { fontPath } : {}) }
-  }).filter(Boolean)
+  const buildOps = (list) => {
+    const fontStyle = fontPath ? { fontPath } : {}
+    const ops = []
+    const inBox = (p, box) => p && p.length === 4 && box && p[0] >= box[0] - 2 && p[1] >= box[1] - 2 && (p[0] + p[2]) <= (box[0] + box[2]) + 2 && (p[1] + p[3]) <= (box[1] + box[3]) + 2
+    for (const r of list) {
+      // 跨文件的碎片擦除任务（默认 exportEntries 生成的合成条目）
+      if (r.__erase) { if (Array.isArray(r.__box)) ops.push({ box: r.__box, text: '', style: { erase: 'auto' } }); continue }
+      const e = entryById[r.id]
+      if (!e || !e.loc) continue
+      if (e.loc.kind === 'imagefont') {
+        const box = Array.isArray(e.loc.box) ? e.loc.box : null
+        if (!box) continue
+        // 先把「画出区域之外」的同文件碎片擦掉，再画译文（顺序反了会把刚写的字擦掉）
+        for (const p of (e.loc.parts || [])) {
+          if (!p || p.file !== rel || !Array.isArray(p.box)) continue
+          if (p.box.join(',') === box.join(',')) continue
+          if (inBox(p.box, box)) continue          // 画框已覆盖，绘制时的 erase 会一起处理
+          ops.push({ box: p.box, text: '', style: { erase: 'auto' } })
+        }
+        ops.push({ box, text: r.target === undefined ? '' : r.target, style: Object.assign({ erase: 'auto' }, fontStyle) })
+        continue
+      }
+      if (!Array.isArray(e.loc.box)) continue
+      ops.push({ box: e.loc.box, text: r.target, style: Object.assign({ erase: 'auto' }, fontStyle) })
+    }
+    return ops
+  }
 
   if (!typeset) return { text: null, binary: true, skip: true }
 

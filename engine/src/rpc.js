@@ -18,7 +18,7 @@ const WORKBENCH_RPC = {
   'workbench.glossary.list': async () => { await loadMeta(); return glossary.slice(0, 500) },
   'workbench.glossary.add': async (args) => { await glossaryAction(Object.assign({ action: 'add' }, args || {})); return glossary.slice(0, 500) },
   'workbench.glossary.remove': async (args) => { await glossaryAction(Object.assign({ action: 'remove' }, args || {})); return glossary.slice(0, 500) },
-  'workbench.scan': async (args) => { const r = await scanRoot(args && args.root, args || {}); return { root: r.root, total: r.total, files: r.files.slice(0, 200), kinds: r.kinds } },
+  'workbench.scan': async (args) => { const r = await scanRoot(args && args.root, args || {}); return { root: r.root, total: r.total, files: r.files.slice(0, 200), kinds: r.kinds, imageFont: r.imageFont } },
   'workbench.parse': async (args) => { const r = await parseFiles((args && args.files) || null, args && args.root); return { total: r.total, truncated: r.truncated, perFile: r.perFile, preview: r.entries.slice(0, 20), errors: (r.errors || []).slice(0, 20) } },
   'workbench.ocr': async (args, exec) => { const r = await ocrAction(args || {}, exec); return { summary: r.summary, images: (r.images || []).slice(0, 50), preview: (r.preview || []).slice(0, 20) } },
   'workbench.translate': async (args) => {

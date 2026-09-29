@@ -39,6 +39,7 @@ const CASES = [
   { name: 'build-check（生成物一致 + 动态包信封）', cmd: NODE, args: [join(HERE, 'build-check.mjs')] },
   { name: 'subtitle（字幕库单测）', cmd: NODE, args: [join(HERE, 'subtitle.test.mjs')] },
   { name: 'ebook（电子书文本层单测）', cmd: NODE, args: [join(HERE, 'ebook.test.mjs')] },
+  { name: 'group（图片字体关联分组单测）', cmd: NODE, args: [join(HERE, 'group.test.mjs')] },
   { name: 'mediakit（ZIP/HTTP 工具）', cmd: NODE, args: [join(HERE, 'mediakit.test.mjs')] },
   { name: 'winocr（Windows OCR 桥）', cmd: NODE, args: [join(HERE, 'winocr.test.mjs')] },
   { name: 'imglib（图像/PDF 工具）', cmd: PY, args: [join(HERE, 'imglib.test.py')], skipIf: () => !existsSync(PY) },

@@ -5,7 +5,12 @@
 
 **v2.0.0 新增**：视频字幕、电子书（EPUB/HTML/PDF）、漫画（CBZ/ZIP/图片）三类载体，
 以及一个**省 token 的 OCR 组件**——本地 Windows OCR 优先，只有本机搞不定的（中文描边艺术字、
-日文假名）才升级到多模态模型，并按图像哈希缓存。详见 [v2 多媒体与 OCR](docs/V2-多媒体与OCR.md)。
+日文假名）才升级到多模态模型，并按图像哈希缓存。
+
+**v2.1.0 新增**：**图片字体**（游戏把字做成图片、一个词由多张小图拼成）的 OCR **关联**——
+先按「文件名序号序列 / 同图同行碎片」把碎片分组、拼接成一条再整体识别，得到语义完整的词组
+（而不是 `New`/`Ga`/`me` 碎片），译文才通顺；导出时整句画在锚点碎片、其余碎片擦空。
+详见 [v2 多媒体与 OCR](docs/V2-多媒体与OCR.md#23-图片字体先关联再识别v21)。
 
 ## 支持的载体与格式
 
@@ -21,6 +26,7 @@
 | **电子书** | `.html` `.xhtml` | 文本节点抽取/回写（跳过 script/style），HTML 转义安全 |
 | **电子书** | `.pdf` | 文本层（FlateDecode + Tj/TJ + ToUnicode）→ 译文对照输出；扫描件走 OCR |
 | **漫画 / 图片艺术字** | `.cbz` `.zip` 图包、图片目录、`.png` `.jpg` `.webp` `.bmp` `.gif` `.tga` `.dds` | 区域检测 → OCR → 翻译 → **擦除原文并按框自动排版译文**回写图片/漫画包 |
+| **图片字体**（用图片代替字体） | 同目录的编号小图（`btn_newgame_0.png`…）、同一张图里被间隙分开的碎片 | **先关联再识别**：按文件名序号序列 / 同图同行碎片分组 → 拼接成一条 → 整体 OCR 成**一个语义单元** → 整句翻译 → 译文画在锚点碎片、其余碎片擦空 |
 
 ## 安装
 
@@ -52,6 +58,7 @@ node tools\validate-declaration.mjs "$env:USERPROFILE\.dsh\hanhua\cordis.patch.y
 游戏文本：hanhua_scan → hanhua_parse → hanhua_glossary → hanhua_translate → hanhua_qa → hanhua_export
 图文载体：hanhua_scan → hanhua_ocr   → hanhua_translate → hanhua_qa → hanhua_export（擦字 + 排版回写）
 视频字幕：hanhua_media subs-extract → hanhua_scan/parse → hanhua_translate → hanhua_export → subs-mux
+图片字体：hanhua_scan（看 imageFont 提示）→ hanhua_ocr（碎片自动关联+整体识别）→ hanhua_translate → hanhua_export（锚点碎片画整句、其余擦空）
 ```
 
 浏览器面板（**设置 →「汉化工作台」**）是同一套引擎的第二入口：先在会话里执行
@@ -62,9 +69,9 @@ node tools\validate-declaration.mjs "$env:USERPROFILE\.dsh\hanhua\cordis.patch.y
 
 | 工具 | 说明 |
 | --- | --- |
-| `hanhua_scan` | 扫描并按 `game/subtitle/ebook/image/comic/video` 分类（返回 `kinds` 统计） |
+| `hanhua_scan` | 扫描并按 `game/subtitle/ebook/image/comic/video` 分类（返回 `kinds` 统计）；发现「一串编号小图」时在 `imageFont` 里提示疑似图片字体 |
 | `hanhua_parse` | 提取游戏文本 / 字幕 / 电子书条目（失败文件列在 `errors`） |
-| `hanhua_ocr` | **OCR 组件**：图片、漫画页、图片艺术字 → 带坐标的文本条目；本地引擎优先、视觉兜底、哈希缓存、预算限量 |
+| `hanhua_ocr` | **OCR 组件**：图片、漫画页、图片艺术字、**图片字体**（碎片先关联再识别）→ 带坐标的文本条目；本地引擎优先、视觉兜底、页面/词组两级哈希缓存、预算限量 |
 | `hanhua_translate` | 词典/缓存优先，未覆盖的批量走在线 API；智能跳过 + 语境去重 + 分批 |
 | `hanhua_qa` | 占位符（含 `⟦n⟧`）、换行、首尾空格、长度比例、漏译 |
 | `hanhua_glossary` | 词典/术语表（完全匹配 > 子串最长 > 正则） |
@@ -87,6 +94,7 @@ node tools\validate-declaration.mjs "$env:USERPROFILE\.dsh\hanhua\cordis.patch.y
 | `apiChunk` | 在线 API 每批条数（默认 40，1–100）；越大越省提示词开销 |
 | `ocrEngine` / `ocrLang` / `ocrBudget` / `ocrMaxImages` / `ocrLayout` | OCR 引擎链、语言、每次视觉预算（默认 8，0=只用本地）、单次处理页数、布局模式 |
 | `typesetFont` | 漫画/艺术字排版字体；留空自动挑可用中文字体 |
+| `imageFontGrouping` / `imageFontMinParts` / `imageFontPhraseGap` / `imageFontGap` / `imageFontMaxParts` | 图片字体关联：模式（auto/filename/none）、最少碎片数（2）、同行词组切分阈值（2.5×行高）、拼接间距（2px）、单组成员上限（8） |
 | `pythonPath` / `powershellPath` / `ffmpegPath` / `ffprobePath` | 外部工具路径（缺省自动探测） |
 
 ## Token 优化
@@ -102,6 +110,8 @@ node tools\validate-declaration.mjs "$env:USERPROFILE\.dsh\hanhua\cordis.patch.y
 | **本地 OCR 优先** | 中文/英文常规字用 Windows 内置 OCR，**零 token**；只对「本地识别不可信」的区域调视觉模型 |
 | **OCR 哈希缓存** | 页面内容 sha256 为键，重复运行 0 调用；部分完成的页面只补没做完的区域 |
 | **裁剪去重** | 同图同框只识别一次 |
+| **图片字体先关联** | 把碎片拼成一条后**一次** OCR 出一个词组，而不是 N 个碎片各识别一次（还会各自触发视觉兜底） |
+| **图片字体先关联** | 把碎片拼成一条后**一次** OCR 出一个词组，而不是 N 个碎片各识别一次（还会各自触发视觉兜底） |
 | **视觉批量 + 预算** | 一次请求 ≤4 张裁剪图摊薄提示词；`ocrBudget` 限制每次最多看几张，超出的留到下次 |
 | 紧凑预览 | 所有工具只返回 ≤20 条预览 + perFile 统计，翻译预览仅含实际变更条目 |
 | 账本 | `hanhua_usage` 给出 API/视觉 token 用量与各项节省计数，可复核「省 token」是否真的生效 |
@@ -113,7 +123,7 @@ v2 端到端测试（39 项断言）实测：20 个条目中 4 个走本地 OCR�
 
 | 内核 | 状态 | 说明 |
 | --- | --- | --- |
-| `dsh 0.2.0-rc.2`（桌面封装） | ✅ 已适配并验证 | 声明式预设 + 插件自带 iconv-lite；`harness` 19/19、`v2-e2e` 39/39 通过 |
+| `dsh 0.2.0-rc.2`（桌面封装） | ✅ 已适配并验证 | 声明式预设 + 插件自带 iconv-lite；`harness` 19/19、`v2-e2e` 50/50、`run-all` 12 套通过 |
 | `dsh 0.1.6-alpha.2` | ✅ 已适配并验证 | 目录式预设 + `dynamicCordisRunner` 自装工作台 |
 | `dsh 0.1.1-rc.2` 及更早 | ⚠️ 未回归验证 | 组合文件已随新版 standard 对齐，旧内核上未再实测 |
 
@@ -131,7 +141,7 @@ v2 端到端测试（39 项断言）实测：20 个条目中 4 个走本地 OCR�
 用桌面封装内置 Node（`<安装目录>\runtime\node.exe`）或系统 node：
 
 ```powershell
-node tests\run-all.mjs              # 11 套全绿（--quick 跳过最慢的端到端）
+node tests\run-all.mjs              # 12 套全绿（--quick 跳过最慢的端到端）
 ```
 
 单跑：
@@ -140,7 +150,8 @@ node tests\run-all.mjs              # 11 套全绿（--quick 跳过最慢的端�
 node tests\mount-check.mjs                  # 组合文件「挂载级」检查：行解析 + 每行 Config 校验
 node tests\preset-health.mjs                # 真实 discovery 健康检查（预设选择器口径）
 node tests\harness.mjs                      # 真实内核服务下跑通 scan→parse→translate→qa→export
-node tests\v2-e2e.mjs                       # 字幕/EPUB/漫画/艺术字 OCR/账本 端到端（本地 mock API）
+node tests\v2-e2e.mjs                       # 字幕/EPUB/漫画/艺术字/图片字体 OCR/账本 端到端（本地 mock API，50 项断言）
+node tests\group.test.mjs                    # 图片字体关联分组（序号序列 / 同行碎片 / 词组切分）
 node tests\build-engine.mjs --check         # 两个信封产物是否仍等于 engine/src/ 的派生结果
 & "<python-with-Pillow>" tests\imglib.test.py
 ```
@@ -150,7 +161,7 @@ node tests\build-engine.mjs --check         # 两个信封产物是否仍等于 
 ```
 DSH-hanhua-mode/
 ├── engine/                 # 动态插件（工作台）产物 + 规范源码
-│   ├── src/                # ★ 唯一真源：core/tools/rpc/media/ocr/subtitle/ebook + scripts/
+│   ├── src/                # ★ 唯一真源：core/tools/rpc/media/ocr/subtitle/ebook/group + scripts/
 │   ├── host.js             # 生成物：动态包 host 半
 │   └── client.js           # 手写：浏览器「汉化工作台」面板
 ├── preset/                 # 持久化预设成品
@@ -171,6 +182,8 @@ DSH-hanhua-mode/
 - `.cbr`/`.rar` 漫画包、`.mobi`/`.azw3` 电子书不支持（建议先用外部工具转换）。
 - 本地 Windows OCR 依赖系统语言包（本机有中/英，无日文）——日文内容由视觉模型兜底。
 - 区域检测是启发式的，密集网点/气泡可能合并或漏检；可用 `layout`/`ocrMinArea` 调参后重跑。
+- **图片字体的关联是启发式的**：`icon_1`/`icon_2` 这种「其实是独立图标」的命名会被误判成一个词组（与「一个词被切开」外部同形）；用 `imageFontGrouping`/`imageFontMaxParts` 收窄或关闭，`hanhua_scan` 的 `imageFont.sample` 会列出被判为一组的文件名样例，QA 也会对可疑分组告警。
+- **图片字体的译文只能整句画在锚点碎片上**，其余碎片被擦空；若每个字都是独立控件单独定位，建议 `hanhua_export typeset=false` 只导出译文清单自行排版。
 - 排版不复刻原字体与字形（艺术字只做擦除 + 重绘）。
 - RGSS `Scripts.rxdata` 脚本代码不处理（仅跳过）；加密/改造过的 Marshal 数据可能无法解析（`errors` 会报告）。
 - `.xp3` 打包的 krkr 资源需先用外部工具解包。

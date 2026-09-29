@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 「汉化模式」v2 端到端测试：字幕 / 电子书 / 漫画 / 图片艺术字 OCR / token 账本。
  *
  * 与 harness.mjs 一样用真实内核服务装配最小 Cordis 运行时，然后跑：
@@ -62,7 +62,16 @@ const MOCK_TRANSLATION = {
   'See you': '明天见，',
   'tomorrow.': '朋友。',
   '勇者传说': '勇者传说',
+  // 图片字体：拼接后的完整词组
+  'New Game': '新游戏',
+  'Options': '设置',
+  'Continue': '继续游戏',
+  'Quit': '退出',
 }
+// 兜底查表：去掉空白 + 转小写（拼接 OCR 的空格不稳定，不能要求逐字节一致）
+const MOCK_NORM = {}
+for (const k of Object.keys(MOCK_TRANSLATION)) MOCK_NORM[k.replace(/\s+/g, '').toLowerCase()] = MOCK_TRANSLATION[k]
+const mockLookup = (src) => MOCK_TRANSLATION[src] || MOCK_NORM[String(src).replace(/\s+/g, '').toLowerCase()] || ('【译】' + src)
 const mockCalls = { translate: 0, vision: 0, visionImages: 0, lastBody: null }
 
 const server = http.createServer((req, res) => {
@@ -90,7 +99,7 @@ const server = http.createServer((req, res) => {
       // 引擎把 [语境, 原文] 对放在提示词最后一行（前面正文里也出现过 '[' 字符）
       const lastLine = text.slice(text.lastIndexOf('\n') + 1)
       try { pairs = JSON.parse(lastLine) } catch (err) { pairs = [] }
-      out = JSON.stringify(pairs.map((p) => MOCK_TRANSLATION[p[1]] || ('【译】' + p[1])))
+      out = JSON.stringify(pairs.map((p) => mockLookup(p[1])))
       usage = { prompt_tokens: 40 * pairs.length + 30, completion_tokens: 20 * pairs.length + 10 }
     }
     const payload = JSON.stringify({ choices: [{ message: { role: 'assistant', content: out } }], usage })
@@ -184,6 +193,22 @@ try {
   check('OCR 结果落盘为缓存', Object.keys(cacheFile.pages || {}).length > 0, `pages=${Object.keys(cacheFile.pages || {}).length}`)
   check('二次 OCR 命中缓存（零 token 重复运行）', ocr2 && ocr2.summary && ocr2.summary.cachedPages > 0, `cachedPages=${ocr2 && ocr2.summary && ocr2.summary.cachedPages}`)
 
+  // ── 3c) 图片字体：先关联、再识别（一个词由多张小图拼成）
+  check('扫描能提示「疑似图片字体」', !!(scan && scan.imageFont && scan.imageFont.suspected), JSON.stringify(scan && scan.imageFont))
+  const uiFiles = ['ui/btn_newgame_0.png', 'ui/btn_newgame_1.png', 'ui/btn_newgame_2.png', 'ui/btn_options_0.png', 'ui/btn_options_1.png', 'ui/menu_atlas.png']
+  const ocrFont = await call('hanhua_ocr', { files: uiFiles, engine: 'auto', layout: 'text', budget: 4 })
+  dump('ocr(imagefont).summary', ocrFont && ocrFont.summary)
+  dump('ocr(imagefont).preview', ocrFont && ocrFont.preview)
+  dump('ocr(imagefont).hints', ocrFont && ocrFont.hints, 1200)
+  check('图片字体：碎片被关联成语义单元（有 parts）', !!(ocrFont && ocrFont.preview && ocrFont.preview.some((p) => (p.parts || 0) >= 2)), JSON.stringify(((ocrFont && ocrFont.preview) || []).map((p) => [p.file, p.parts, p.source])))
+  const normTxt = (s) => String(s || '').replace(/[^0-9a-z\u4e00-\u9fff]+/gi, '').toLowerCase()  // 去掉空格与 OCR 噪声符号，只比对字母数字
+  const fontEntries = JSON.parse(await readFile(join(project, '.hanhua-parsed.json'), 'utf8')).entries.filter((e) => e.loc && e.loc.kind === 'imagefont')
+  const newGameEntry = fontEntries.find((e) => normTxt(e.source).includes('newgame'))
+  check('图片字体：拼接后整体识别出完整词组（New Game，而不是 New/Ga/me 三个碎片）', !!newGameEntry && newGameEntry.loc.parts.length === 3, newGameEntry ? `${newGameEntry.file} parts=${newGameEntry.loc.parts.length} source="${newGameEntry.source}"` : JSON.stringify(fontEntries.map((e) => [e.file, e.source])))
+  check('图片字体：非锚点碎片不再各自成条目', !fontEntries.some((e) => /btn_newgame_[12]\.png$/.test(e.file)), JSON.stringify(fontEntries.map((e) => e.file)))
+  const atlasEntry = fontEntries.find((e) => normTxt(e.source).includes('continue'))
+  check('图片字体：同一行里被大间隙分开的碎片也被关联（atlas）', !!atlasEntry && atlasEntry.loc.parts.length >= 2 && atlasEntry.loc.groupKind === 'atlas', atlasEntry ? `parts=${atlasEntry.loc.parts.length} kind=${atlasEntry.loc.groupKind} source="${atlasEntry.source}"` : '')
+
   // ── 3b) 增量解析不应丢掉既有条目（回归：files=[一个文件] 后整轮条目还在）
   const partial = await call('hanhua_parse', { files: ['subs/ep2.ass'] })
   const parsedFile = JSON.parse(await readFile(join(project, '.hanhua-parsed.json'), 'utf8'))
@@ -201,12 +226,35 @@ try {
   check('token 账本记账（prompt/completion）', tr && tr.usage && tr.usage.apiPromptTokens > 0 && tr.usage.apiCompletionTokens > 0, JSON.stringify(tr && tr.usage && { p: tr.usage.apiPromptTokens, c: tr.usage.apiCompletionTokens }))
   const methods = (tr && tr.summary && tr.summary.methods) || {}
   check('省 token：跳过无需翻译的条目', (methods.skip || 0) > 0, JSON.stringify(methods))
+  // 语义通顺：图片字体条目必须按**整句**翻译（拿到词组级译文），并且提示词里带了同屏其它标签做上下文
+  const translatedAll = JSON.parse(await readFile(join(project, '.hanhua-translated.json'), 'utf8')).entries
+  const ngTranslated = translatedAll.find((r) => newGameEntry && r.id === newGameEntry.id)
+  check('语义通顺：图片字体按整句翻译（New Game → 新游戏）', !!ngTranslated && ngTranslated.target === '新游戏', JSON.stringify(ngTranslated && { source: ngTranslated.source, target: ngTranslated.target, method: ngTranslated.method }))
+  const promptText = String((mockCalls.lastBody && mockCalls.lastBody.messages && mockCalls.lastBody.messages[0] && mockCalls.lastBody.messages[0].content) || '')
+  check('语义通顺：提示词带「图片字体标签」语境与同屏标签上下文', promptText.includes('图片字体标签') && promptText.includes('Other labels on the same screen'), promptText.split('\n').filter((l) => l.includes('图片字体') || l.includes('Other labels'))[0] || '')
+  check('图片字体条目无「碎片未关联 / 像碎片拼接」告警', !!ngTranslated && !(ngTranslated.warnings || []).some((w) => /碎片|拼接/.test(w)), JSON.stringify(ngTranslated && ngTranslated.warnings))
 
   // ── 5) 导出：字幕/EPUB/图片各自按原格式回写
   const before = {}
-  for (const rel of ['subs/ep1.srt', 'subs/ep2.ass', 'subs/ep3.vtt', 'book/book.epub', 'art/title.png', 'comic/ch1.cbz']) {
+  for (const rel of ['subs/ep1.srt', 'subs/ep2.ass', 'subs/ep3.vtt', 'book/book.epub', 'art/title.png', 'comic/ch1.cbz', 'ui/btn_newgame_0.png', 'ui/btn_newgame_1.png', 'ui/btn_newgame_2.png']) {
     before[rel] = await readFile(join(project, rel))
   }
+  // 图片里「非背景像素」的个数：用来验证译文被画上去 / 旧碎片被擦空
+  const inkOf = (rel) => {
+    const out = execFileSync(PY, ['-c', [
+      'import sys',
+      'from PIL import Image',
+      'im = Image.open(sys.argv[1]).convert("RGB")',
+      'px = im.load(); n = 0',
+      'for y in range(im.height):',
+      '    for x in range(im.width):',
+      '        r, g, b = px[x, y]',
+      '        if r + g + b < 720: n += 1',
+      'print(n)',
+    ].join('\n'), join(project, rel)], { encoding: 'utf8' })
+    return Number(String(out).trim().split('\n').pop())
+  }
+  const inkBefore = { ng0: inkOf('ui/btn_newgame_0.png'), ng1: inkOf('ui/btn_newgame_1.png') }
   const exp = await call('hanhua_export', { mode: 'inplace' })
   dump('export', { total: exp.total, ok: exp.ok })
   dump('export.results', exp.results, 3000)
@@ -248,6 +296,15 @@ try {
   // 图片：擦字 + 排版（标题图 inplace 回写、comic.cbz 重打包）
   const titleAfter = await readFile(join(project, 'art/title.png'))
   check('图片标题图已被回写（内容变化 + .bak 备份）', !titleAfter.equals(before['art/title.png']) && existsSync(join(project, 'art/title.png.bak')), `size=${titleAfter.length}`)
+
+  // 图片字体：译文画在锚点碎片上，其余碎片被擦空并各自留 .bak
+  const inkNg0 = inkOf('ui/btn_newgame_0.png')
+  const inkNg1 = inkOf('ui/btn_newgame_1.png')
+  const inkNg2 = inkOf('ui/btn_newgame_2.png')
+  check('图片字体：锚点碎片已回写（内容变化 + 有墨迹 + .bak）', !(await readFile(join(project, 'ui/btn_newgame_0.png'))).equals(before['ui/btn_newgame_0.png']) && inkNg0 > 30 && existsSync(join(project, 'ui/btn_newgame_0.png.bak')), `ink ${inkBefore.ng0}→${inkNg0}`)
+  check('图片字体：非锚点碎片被擦空（旧字形不残留）', inkNg1 === 0 && inkNg2 === 0, `ink1 ${inkBefore.ng1}→${inkNg1} / ink2 →${inkNg2}`)
+  check('图片字体：每个被改动的碎片都有 .bak 备份', existsSync(join(project, 'ui/btn_newgame_1.png.bak')) && existsSync(join(project, 'ui/btn_newgame_2.png.bak')), '')
+
   const cbzAfter = await readFile(join(project, 'comic/ch1.cbz'))
   const cbzCheck = execFileSync(PY, ['-c', [
     'import sys, zipfile, json, io',

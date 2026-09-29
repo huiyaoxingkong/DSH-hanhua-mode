@@ -12,6 +12,8 @@ const GUIDE_LINES = [
   '汉化引擎工具指南（hanhua_*）：',
   '- 支持的汉化载体：① 游戏文本（RPG Maker MV/MZ 的 JSON、RGSS 家族 XP/VX/VX Ace/mkxp-z 的 .rxdata/.rvdata/.rvdata2 Ruby Marshal、krkr/KAG 的 .ks/.tjs/.scn、Ren\'Py，以及通用 JSON/CSV/PO/INI/YAML/TXT）；② 视频字幕（.srt/.vtt/.ass/.ssa/.lrc/.sub/.smi，以及 ffmpeg 可抽取的内嵌字幕轨）；③ 电子书（.epub 全量往返、.html/.xhtml、.pdf 文本层与内嵌图片、.txt）；④ 漫画与图片（.cbz/.zip 图包、图片目录、单图，以及游戏里的图片艺术字）。',
   '- 图文类载体（漫画页 / 图片艺术字 / 扫描件 / 游戏 UI 图）先走 hanhua_ocr：本地 Windows OCR 免费且不耗 token，识别不了（日文假名、描边艺术字）才升级到多模态模型，结果按图像哈希缓存，重复运行零成本。',
+  '- 图片字体（游戏把字做成图片、一个词由多张小图拼成，扫描结果里 imageFont.suspected=true）：hanhua_ocr 会**先关联再识别** —— 按文件名序号序列或同一行的碎片分组、拼接成一条、整体识别成一个语义单元，整句翻译后回写到锚点碎片并把其余碎片擦空。不要把这个流程拆成「逐图识别再拼译文」，那样必然不通顺。',
+  '- 图片字体的调参：imageFontGrouping（auto/filename/none）、imageFontMinParts（默认 2）、imageFontPhraseGap（默认 2.5）、imageFontGap（默认 6）；扫描结果里的 imageFont.sample 会给出被判为一组的文件名样例，误判时用 imageFontGrouping=none 关闭。',
   '- 标准流程：hanhua_scan 扫描 → hanhua_parse 提取文本（errors 字段列出失败文件）→ hanhua_glossary 维护术语词典（人名/地名/道具名必须统一）→ hanhua_translate 翻译 → hanhua_qa 质检 → hanhua_export 写回。',
   '- 图文载体流程：hanhua_ocr（识别出带坐标的文本条目）→ hanhua_translate → hanhua_export：漫画页/T 图会擦除原文并按框自动排版译文回写图片；字幕与 EPUB 按原文件结构回写。',
   '- 视频字幕：hanhua_media action=subs-extract 从视频抽出字幕轨，翻译后用 action=subs-mux 回封（需要本机有 ffmpeg/ffprobe；没有时直接翻译外挂字幕文件）。',
@@ -26,7 +28,7 @@ const GUIDE_LINES = [
 const TOOL_SPECS = [
   {
     name: 'hanhua_scan',
-    description: '扫描汉化项目目录，列出全部可汉化的资源文件：游戏文本（JSON/CSV/TSV/PO/TXT/INI/YAML/RenPy、RPG Maker MV/MZ、RPG Maker XP/VX/VX Ace/mkxp-z 的 .rxdata/.rvdata/.rvdata2、krkr/KAG 的 .ks/.tjs/.scn）、视频字幕（.srt/.vtt/.ass/.ssa/.lrc/.sub/.smi）、电子书（.epub/.pdf/.html/.xhtml）、漫画与图片（.cbz/.zip/.png/.jpg/.webp 等）。返回按类别统计的文件清单，供 hanhua_parse / hanhua_ocr 使用。',
+    description: '扫描汉化项目目录，列出全部可汉化的资源文件：游戏文本（JSON/CSV/TSV/PO/TXT/INI/YAML/RenPy、RPG Maker MV/MZ、RPG Maker XP/VX/VX Ace/mkxp-z 的 .rxdata/.rvdata/.rvdata2、krkr/KAG 的 .ks/.tjs/.scn）、视频字幕（.srt/.vtt/.ass/.ssa/.lrc/.sub/.smi）、电子书（.epub/.pdf/.html/.xhtml）、漫画与图片（.cbz/.zip/.png/.jpg/.webp 等）。返回按类别统计的文件清单；若发现「图片字体」（同目录里一串编号小图，游戏把字做成了图片）会在 imageFont 字段里给出提示。',
     properties: {
       root: { type: 'string', description: '项目根目录，绝对路径或相对当前根目录；缺省用上次配置' },
       kinds: { type: 'array', items: { type: 'string', enum: ['game', 'subtitle', 'ebook', 'image'] }, description: '只扫描指定类别（缺省全部）' },
@@ -47,7 +49,7 @@ const TOOL_SPECS = [
   },
   {
     name: 'hanhua_ocr',
-    description: 'OCR 组件：从图片里识别文本（漫画页气泡、图片艺术字、游戏 UI 图、扫描件），产出带坐标与置信线索的文本条目，可直接进入 hanhua_translate/hanhua_export 流程。引擎链 auto：Windows 内置 OCR（本地、免费、零 token，支持中文/英文）→ 多模态视觉模型（识别日文假名、描边艺术字等本地引擎搞不定的内容，按图批量调用）→ tesseract（若本机装了）。省 token：按图像内容哈希缓存、相同图像去重、只对「有文字的区域」调用视觉模型、可用 budget 限制本次最多看几张图。',
+    description: 'OCR 组件：从图片里识别文本（漫画页气泡、图片艺术字、图片字体、游戏 UI 图、扫描件），产出带坐标的文本条目，可直接进入 hanhua_translate/hanhua_export 流程。**图片字体**（游戏用图片代替字体、一个词由多张小图拼成）会先做关联：按文件名序号序列或同一行的碎片分组 → 拼接成一条 → 整体识别 → 得到语义完整的词组（而不是 "New"/"Ga"/"me" 这种碎片），译文才可能通顺。引擎链 auto：Windows 内置 OCR（本地、免费、零 token）→ 多模态视觉模型（识别日文假名、描边艺术字等本地搞不定的内容，按图批量调用）→ tesseract（若本机装了）。省 token：页面/词组两级哈希缓存、同图同框去重、只对「有文字的区域」调用视觉模型、可用 budget 限制本次最多看几张图。',
     properties: {
       files: { type: 'array', items: { type: 'string' }, description: '要 OCR 的图片/漫画页（相对路径）；缺省用上次 hanhua_scan 的图片类结果' },
       root: { type: 'string', description: '项目根目录覆盖' },
@@ -140,6 +142,10 @@ const TOOL_SPECS = [
       ocrBudget: { type: 'number', description: '单次 hanhua_ocr 最多调用视觉模型的图片数（默认 8）' },
       typesetFont: { type: 'string', description: '漫画/艺术字排版字体绝对路径' },
       ffmpegPath: { type: 'string', description: 'ffmpeg 可执行文件路径（缺省自动探测）' },
+      imageFontGrouping: { type: 'string', description: '图片字体关联：auto（默认，文件名序号 + 同一行碎片）/ filename（只按文件名序号）/ none（关闭关联，逐碎片识别）' },
+      imageFontMinParts: { type: 'number', description: '少于这么多碎片不成组（默认 2）' },
+      imageFontPhraseGap: { type: 'number', description: '同一行内间隙超过「该值 × 行高」才断开成另一个词组（默认 2.5）' },
+      imageFontGap: { type: 'number', description: '拼接碎片之间的像素间距（默认 6）' },
     },
     required: ['action'],
     run: async (args) => configAction(args || {}),

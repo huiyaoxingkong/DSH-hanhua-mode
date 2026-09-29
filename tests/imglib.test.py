@@ -74,6 +74,61 @@ def box_of(r):
     return (r['x'], r['y'], r['x'] + r['w'], r['y'] + r['h'])
 
 
+def ink_bbox(path, tol=34):
+    """按「与四边中位色差异 > tol」测量墨迹包围盒（与 imglib.stitch 同口径）。
+
+    返回 (x0, y0, x1, y1) 或 None（没有墨迹）。
+    """
+    arr = np.asarray(Image.open(path).convert('RGB'), dtype=np.int16)
+    h, w = arr.shape[:2]
+    edge = np.concatenate([arr[0, :, :], arr[h - 1, :, :],
+                           arr[:, 0, :], arr[:, w - 1, :]], axis=0)
+    bg = np.median(edge.astype(np.float32), axis=0)
+    mask = np.abs(arr - bg.reshape(1, 1, 3)).max(axis=2) > tol
+    ys = np.flatnonzero(mask.any(axis=1))
+    xs = np.flatnonzero(mask.any(axis=0))
+    if ys.size == 0 or xs.size == 0:
+        return None
+    return int(xs[0]), int(ys[0]), int(xs[-1]) + 1, int(ys[-1]) + 1
+
+
+def make_fragment(path, text, font_path, size, top, bottom, side=4):
+    """造一张白底黑字的图片字体碎片（尺寸与上下留白都可不同）。
+
+    先按墨迹把文字裁紧，再放进 (墨迹宽 + 2*side) x (墨迹高 + top + bottom)
+    的白底画布，位置固定在 (side, top)。返回 (宽, 高)。
+    """
+    probe = Image.new('RGB', (500, 240), (255, 255, 255))
+    ImageDraw.Draw(probe).text((30, 50), text, font=_font(font_path, size),
+                               fill=(0, 0, 0))
+    arr = np.asarray(probe, dtype=np.int16)
+    ink = np.abs(arr - 255).max(axis=2) > 34
+    ys = np.flatnonzero(ink.any(axis=1))
+    xs = np.flatnonzero(ink.any(axis=0))
+    x0, y0 = int(xs[0]), int(ys[0])
+    x1, y1 = int(xs[-1]) + 1, int(ys[-1]) + 1
+    glyph = probe.crop((x0, y0, x1, y1))
+    W = (x1 - x0) + side * 2
+    H = (y1 - y0) + top + bottom
+    img = Image.new('RGB', (W, H), (255, 255, 255))
+    img.paste(glyph, (side, top))
+    img.save(path)
+    return W, H
+
+
+def part_ink_bounds(canvas, part, bg, tol=34):
+    """在拼接图的 part 矩形内测墨迹，返回 (left, top, right, bottom)（画布绝对坐标）。"""
+    sub = canvas[part['y']:part['y'] + part['h'], part['x']:part['x'] + part['w']]
+    mask = np.abs(sub.astype(np.int16)
+                  - np.asarray(bg, dtype=np.int16).reshape(1, 1, 3)).max(axis=2) > tol
+    ys = np.flatnonzero(mask.any(axis=1))
+    xs = np.flatnonzero(mask.any(axis=0))
+    if ys.size == 0 or xs.size == 0:
+        return None
+    return (part['x'] + int(xs[0]), part['y'] + int(ys[0]),
+            part['x'] + int(xs[-1]) + 1, part['y'] + int(ys[-1]) + 1)
+
+
 def make_text_pdf(path):
     """手工构造一个带文本层 + FlateDecode 内嵌图片的最小 PDF（1 页）。
 
@@ -175,6 +230,12 @@ class ImglibTest(unittest.TestCase):
         self.assertTrue(res['numpy'].startswith('2.'))
         print('\n[probe] python=%s pillow=%s numpy=%s cjk字体=%d/%d'
               % (res['python'], res['pillow'], res['numpy'], len(cjk), len(res['fonts'])))
+
+    def test_01b_probe_stitch_support(self):
+        """probe 应声明 stitch 能力（新增 op 的可用性探测）。"""
+        res = self.call({'op': 'probe'}, expect_ok=True)
+        self.assertIs(res.get('stitch'), True, 'probe 未声明 stitch 支持：%s' % res)
+        print('\n[probe stitch] stitch=%s' % res.get('stitch'))
 
     # ---------------------------------------------------------- 2. regions
     def test_02_regions_detect(self):
@@ -568,6 +629,355 @@ class ImglibTest(unittest.TestCase):
             res = json.load(fh)
         self.assertFalse(res['ok'])
         self.assertTrue(res['error'])
+
+    # ---------------------------------------------------------- 8. stitch
+    def _frags(self, tag):
+        """三个尺寸/上下留白都不同的碎片：'New' / 'game'（带降部）/ 'A'。"""
+        f1 = os.path.join(self.tmp, 'frag-%s-new.png' % tag)
+        f2 = os.path.join(self.tmp, 'frag-%s-game.png' % tag)
+        f3 = os.path.join(self.tmp, 'frag-%s-A.png' % tag)
+        w1, _ = make_fragment(f1, 'New', ARIAL, 30, 3, 20)
+        w2, _ = make_fragment(f2, 'game', ARIAL, 30, 12, 6)
+        w3, _ = make_fragment(f3, 'A', ARIAL, 34, 20, 3)
+        return [(f1, w1), (f2, w2), (f3, w3)]
+
+    def test_08_stitch_h_baseline(self):
+        """横向拼接 + 默认 baseline：按墨迹底边对齐，宽=各图宽和+间距。"""
+        frags = self._frags('h')
+        paths = [p for p, _ in frags]
+        ws = [w for _, w in frags]
+        gap, pad = 8, 4
+        out = os.path.join(self.tmp, 'stitch-h.png')
+        res = self.call({'op': 'stitch', 'items': [
+            {'paths': paths, 'out': out, 'gap': gap, 'padding': pad}]},
+            expect_ok=True)
+        f = res['files'][0]
+        print('\n[stitch h] %s' % json.dumps(
+            {k: v for k, v in f.items() if k != 'parts'}, ensure_ascii=False))
+        print('[stitch h parts] %s' % json.dumps(f['parts'], ensure_ascii=False))
+
+        self.assertTrue(os.path.isfile(out))
+        self.assertEqual(f['sources'], paths)
+        self.assertEqual(len(f['parts']), 3)
+        self.assertEqual([p['path'] for p in f['parts']], paths)
+        with Image.open(out) as im:
+            im.load()
+            self.assertEqual(im.mode, 'RGB', 'stitch 输出必须是 RGB')
+            self.assertEqual(im.size, (f['w'], f['h']))
+            canvas = np.asarray(im, dtype=np.int16)
+
+        # 宽 ≈ 各图宽之和 + 间距；高 ≈ 最大墨迹高 + 2*padding
+        inks = [ink_bbox(p) for p in paths]
+        self.assertTrue(all(b is not None for b in inks), '夹具碎片应有墨迹')
+        ink_h = [b[3] - b[1] for b in inks]
+        self.assertEqual(f['w'], sum(ws) + gap * 2,
+                         '宽度应为各图宽之和 + 间距（parts=%s）' % f['parts'])
+        self.assertAlmostEqual(f['h'], max(ink_h) + 2 * pad, delta=2,
+                               msg='高度应为最大墨迹高 + 2*padding（%s vs %d）'
+                                   % (f['h'], max(ink_h) + 2 * pad))
+
+        # parts：x 递增且为首尾相接的累计位置；y 在画布内
+        xs = [p['x'] for p in f['parts']]
+        self.assertEqual(xs[0], 0)
+        self.assertEqual(xs[1], f['parts'][0]['w'] + gap)
+        self.assertEqual(xs[2], xs[1] + f['parts'][1]['w'] + gap)
+        for p, b in zip(f['parts'], inks):
+            self.assertGreaterEqual(p['y'], 0)
+            self.assertLessEqual(p['y'] + p['h'], f['h'])
+            self.assertLessEqual(p['x'] + p['w'], f['w'])
+            self.assertAlmostEqual(p['w'], (b[2] - b[0]) + 2 * pad, delta=2,
+                                   msg='part 宽应为墨迹宽 + 2*padding：%s' % p)
+
+        # baseline：三块墨迹的底边应在同一水平线（±2px）
+        bounds = []
+        for p in f['parts']:
+            ib = part_ink_bounds(canvas, p, f['bg'])
+            self.assertIsNotNone(ib, 'part 内没有墨迹：%s' % p)
+            bounds.append(ib)
+        bottoms = [b[3] for b in bounds]
+        self.assertLessEqual(max(bottoms) - min(bottoms), 2,
+                             'baseline 未对齐：%s（parts=%s）' % (bottoms, f['parts']))
+
+        # 拼接结果能被 OCR 用：整体非空白、每块都有墨迹
+        bg_arr = np.asarray(f['bg'], dtype=np.int16).reshape(1, 1, 3)
+        d_all = np.abs(canvas - bg_arr).max(axis=2)
+        total_ink = int(np.count_nonzero(d_all > 34))
+        self.assertGreater(total_ink, 100, '拼接图疑似空白（墨迹像素=%d）' % total_ink)
+
+        # 背景为采样色（白底夹具）：间隔处像素等于返回的 bg，且接近纯白
+        self.assertEqual(len(f['bg']), 3)
+        self.assertGreaterEqual(min(f['bg']), 240, '背景采样色异常：%s' % f['bg'])
+        p0 = f['parts'][0]
+        gx = p0['x'] + p0['w'] + gap // 2
+        gy = p0['y'] + p0['h'] // 2
+        self.assertTupleEqual(tuple(int(v) for v in canvas[gy, gx]), tuple(f['bg']),
+                              '两块之间的间隔应是画布背景色')
+
+    def test_08b_stitch_v(self):
+        """竖排（direction:"v"）：高度为各块高度和 + 间距，默认按墨迹左边缘对齐。"""
+        frags = self._frags('v')
+        paths = [p for p, _ in frags]
+        gap, pad = 5, 4
+        out = os.path.join(self.tmp, 'stitch-v.png')
+        res = self.call({'op': 'stitch', 'items': [
+            {'paths': paths, 'out': out, 'gap': gap, 'padding': pad,
+             'direction': 'v'}]}, expect_ok=True)
+        f = res['files'][0]
+        self.assertEqual(f['direction'], 'v')
+        self.assertEqual(f['align'], 'baseline')
+        with Image.open(out) as im:
+            im.load()
+            self.assertEqual(im.mode, 'RGB')
+            canvas = np.asarray(im, dtype=np.int16)
+
+        self.assertEqual(f['h'], sum(p['h'] for p in f['parts']) + gap * 2)
+        self.assertAlmostEqual(f['w'], max(p['w'] for p in f['parts']), delta=2,
+                               msg='竖排 baseline 的画布宽应由最宽的一块决定')
+        ys = [p['y'] for p in f['parts']]
+        self.assertEqual(ys[0], 0)
+        self.assertEqual(ys[1], f['parts'][0]['h'] + gap)
+        self.assertEqual(ys[2], ys[1] + f['parts'][1]['h'] + gap)
+
+        # 竖排 baseline = 墨迹左边缘对齐（±2px）
+        lefts = []
+        for p in f['parts']:
+            ib = part_ink_bounds(canvas, p, f['bg'])
+            self.assertIsNotNone(ib, 'part 内没有墨迹：%s' % p)
+            lefts.append(ib[0])
+        self.assertLessEqual(max(lefts) - min(lefts), 2,
+                             '竖排墨迹左边缘未对齐：%s' % lefts)
+        for p in f['parts']:
+            self.assertGreaterEqual(p['x'], 0)
+            self.assertLessEqual(p['x'] + p['w'], f['w'])
+
+        # 间隔行是背景色
+        p0 = f['parts'][0]
+        gx = p0['x'] + p0['w'] // 2
+        gy = p0['y'] + p0['h'] + gap // 2
+        self.assertTupleEqual(tuple(int(v) for v in canvas[gy, gx]), tuple(f['bg']),
+                              '竖排两块之间的间隔应是画布背景色')
+        total_ink = int(np.count_nonzero(
+            np.abs(canvas - np.asarray(f['bg'], dtype=np.int16).reshape(1, 1, 3)).max(axis=2) > 34))
+        self.assertGreater(total_ink, 100, '竖排拼接图疑似空白')
+
+    def test_08c_stitch_align_variants(self):
+        """align:"top" 与 align:"center" 的摆放语义（横排 + 竖排）。"""
+        frags = self._frags('al')
+        paths = [p for p, _ in frags]
+        gap, pad = 6, 4
+        out_top = os.path.join(self.tmp, 'stitch-top.png')
+        out_mid = os.path.join(self.tmp, 'stitch-center.png')
+        out_vtop = os.path.join(self.tmp, 'stitch-vtop.png')
+        res = self.call({'op': 'stitch', 'items': [
+            {'paths': paths, 'out': out_top, 'gap': gap, 'padding': pad,
+             'align': 'top'},
+            {'paths': paths, 'out': out_mid, 'gap': gap, 'padding': pad,
+             'align': 'center'},
+            {'paths': paths, 'out': out_vtop, 'gap': gap, 'padding': pad,
+             'direction': 'v', 'align': 'top'},
+        ]}, expect_ok=True)
+        ftop, fmid, fvtop = res['files']
+
+        self.assertEqual(ftop['h'], max(p['h'] for p in ftop['parts']),
+                         'align=top 时高度应等于最高的一块')
+        for p in ftop['parts']:
+            self.assertEqual(p['y'], 0, 'align=top 时每块都应贴顶')
+
+        self.assertEqual(fmid['h'], max(p['h'] for p in fmid['parts']))
+        for p in fmid['parts']:
+            self.assertLessEqual(abs(p['y'] - (fmid['h'] - p['h']) // 2), 1,
+                                 'align=center 时每块应垂直居中：%s' % p)
+
+        self.assertEqual(fvtop['w'], max(p['w'] for p in fvtop['parts']),
+                         '竖排 align=top 时宽度应等于最宽的一块')
+        for p in fvtop['parts']:
+            self.assertEqual(p['x'], 0, '竖排 align=top 时每块都应贴着左边缘')
+
+    def test_08e_stitch_input_modes(self):
+        """输入 RGBA（透明底）/L/P 都能拼；输出统一 RGB，透明区域合成到画布底色。"""
+        base = os.path.join(self.tmp, 'frag-m-base.png')
+        make_fragment(base, 'Mi', ARIAL, 30, 8, 8)
+        rgba = os.path.join(self.tmp, 'frag-m-rgba.png')
+        with Image.open(base) as im:
+            r = im.convert('RGBA')
+        arr = np.asarray(r).copy()
+        arr[:, :, 3] = np.where(arr[:, :, :3].min(axis=2) > 200, 0, 255)
+        Image.fromarray(arr, 'RGBA').save(rgba)
+        gray = os.path.join(self.tmp, 'frag-m-gray.png')
+        pal = os.path.join(self.tmp, 'frag-m-pal.png')
+        with Image.open(base) as im:
+            im.convert('L').save(gray)
+            im.convert('P', palette=Image.ADAPTIVE, colors=8).save(pal)
+
+        paths = [base, rgba, gray, pal]
+        out = os.path.join(self.tmp, 'stitch-modes.png')
+        res = self.call({'op': 'stitch', 'items': [
+            {'paths': paths, 'out': out, 'gap': 6, 'padding': 4,
+             'bg': [0, 0, 200]}]}, expect_ok=True)
+        f = res['files'][0]
+        self.assertEqual(f['bg'], [0, 0, 200], '显式 bg 应被尊重')
+        with Image.open(out) as im:
+            im.load()
+            self.assertEqual(im.mode, 'RGB', 'stitch 输出必须是 RGB')
+            canvas = np.asarray(im, dtype=np.int16)
+        for p in f['parts']:
+            self.assertIsNotNone(part_ink_bounds(canvas, p, f['bg']),
+                                 '该输入模式下没有拼出墨迹：%s' % p['path'])
+        # 透明底那一块的 padding 区域应露出画布底色（说明做了 alpha 合成）
+        ptr = f['parts'][1]
+        self.assertTupleEqual(tuple(int(v) for v in canvas[ptr['y'], ptr['x']]),
+                              (0, 0, 200), '透明背景未合成到画布底色')
+
+    def test_08d_stitch_errors(self):
+        """错误路径：路径不存在 / paths 为空 → ok:false 且 out.json 仍写出。"""
+        missing = os.path.join(self.tmp, 'no-such-frag.png')
+        out1 = os.path.join(self.tmp, 'stitch-bad1.png')
+        out2 = os.path.join(self.tmp, 'stitch-bad2.png')
+        res = self.call({'op': 'stitch', 'items': [
+            {'paths': [missing], 'out': out1},
+            {'paths': [], 'out': out2},
+        ]}, expect_ok=False)
+        print('\n[stitch 错误] %s' % res.get('error'))
+        self.assertFalse(res['ok'])
+        self.assertTrue(res.get('error'))
+        self.assertEqual(res['files'], [], '失败时不应产出文件')
+        self.assertEqual(len(res['errors']), 2)
+        self.assertFalse(os.path.isfile(out1))
+        self.assertFalse(os.path.isfile(out2))
+
+        # 单条 item 失败不影响其它 item：好 item 仍然写出
+        good = os.path.join(self.tmp, 'frag-good.png')
+        make_fragment(good, 'Ok', ARIAL, 28, 6, 6)
+        out3 = os.path.join(self.tmp, 'stitch-good.png')
+        res2 = self.call({'op': 'stitch', 'items': [
+            {'paths': [missing], 'out': out1},
+            {'paths': [good], 'out': out3},
+        ]}, expect_ok=False)
+        self.assertFalse(res2['ok'])
+        self.assertEqual(len(res2['files']), 1)
+        self.assertEqual(len(res2['errors']), 1)
+        self.assertTrue(os.path.isfile(out3), '好的 item 应照常写出')
+        with Image.open(out3) as im:
+            im.load()
+            self.assertGreater(im.size[0], 0)
+            self.assertGreater(im.size[1], 0)
+
+        # items 为空数组 → 整体失败
+        res3 = self.call({'op': 'stitch', 'items': []}, expect_ok=False)
+        self.assertTrue(res3.get('error'))
+        # direction / align 取值非法 → 整体失败
+        res4 = self.call({'op': 'stitch', 'items': [
+            {'paths': [good], 'out': out3, 'direction': 'x'}]}, expect_ok=False)
+        self.assertIn('direction', res4['error'])
+
+    # ---------------------------------------------------------- 9. typeset 只擦除
+    def test_09_typeset_erase_only(self):
+        """text 为空 + erase=auto：只擦除不绘制，框外像素逐字节不变。"""
+        src = os.path.join(self.tmp, 'eo-src.png')
+        img = Image.new('RGB', (400, 200), (255, 255, 255))
+        ImageDraw.Draw(img).text((60, 80), 'ERASE ME', font=_font(ARIAL, 34),
+                                 fill=(0, 0, 0))
+        img.save(src)
+        box = [40, 60, 260, 70]
+        out = os.path.join(self.tmp, 'eo-out.png')
+        out2 = os.path.join(self.tmp, 'eo-out2.png')
+        res = self.call({'op': 'typeset', 'items': [
+            {'path': src, 'out': out, 'ops': [
+                {'box': box, 'text': '', 'style': {'erase': 'auto'}}]},
+            # text 键缺失也应视为「只擦除」
+            {'path': src, 'out': out2, 'ops': [
+                {'box': box, 'style': {'erase': 'rect',
+                                       'eraseColor': [250, 250, 250]}}]},
+        ]}, expect_ok=True)
+        op = res['files'][0]['ops'][0]
+        op2 = res['files'][1]['ops'][0]
+        print('\n[typeset 只擦除] %s' % json.dumps(op, ensure_ascii=False))
+        print('[typeset 只擦除 rect] %s' % json.dumps(op2, ensure_ascii=False))
+        self.assertEqual(op['mode'], 'erase-only')
+        self.assertEqual(op2['mode'], 'erase-only')
+        self.assertTrue(os.path.isfile(out))
+        for k in ('box', 'mode', 'fontSize', 'lines', 'fits', 'eraseColor',
+                  'erasedPixels', 'inkBefore', 'inkAfterErase', 'inkFinal',
+                  'lineWidths'):
+            self.assertIn(k, op, '只擦除的返回缺少字段 %s' % k)
+        self.assertEqual(op['box'], [float(v) for v in box])
+        self.assertEqual(op['fontSize'], 0)
+        self.assertEqual(op['lines'], 0)
+
+        # 框内墨迹被擦掉
+        self.assertGreater(op['inkBefore'], 50, '夹具本身应有原文墨迹')
+        self.assertLessEqual(op['inkAfterErase'], max(6, int(op['inkBefore'] * 0.02)),
+                             '框内墨迹没擦干净：%d -> %d'
+                             % (op['inkBefore'], op['inkAfterErase']))
+        self.assertEqual(op['inkFinal'], op['inkAfterErase'], '只擦除不应写入新墨迹')
+
+        before = np.asarray(Image.open(src).convert('RGB'), dtype=np.int16)
+        after = np.asarray(Image.open(out).convert('RGB'), dtype=np.int16)
+        x0, y0 = box[0], box[1]
+        x1, y1 = box[0] + box[2], box[1] + box[3]
+        keep = np.ones(before.shape[:2], dtype=bool)
+        keep[y0:y1, x0:x1] = False
+        self.assertTrue(np.array_equal(before[keep], after[keep]),
+                        '框外像素被改动了（只擦除不应影响框外）')
+        # 框内不再有深色墨迹
+        sub = after[y0:y1, x0:x1]
+        self.assertLess(int(np.count_nonzero(sub.sum(axis=2) < 300)), 10,
+                        '框内仍有深色墨迹')
+        # erase=rect 用指定底色整块覆盖
+        self.assertEqual(op2['eraseColor'], [250, 250, 250])
+        after2 = np.asarray(Image.open(out2).convert('RGB'), dtype=np.int16)
+        self.assertLess(int(np.count_nonzero(after2[y0:y1, x0:x1].sum(axis=2) < 300)), 10)
+
+    def test_09b_typeset_erase_only_mixed(self):
+        """同一张图「绘制 + 只擦除」混合：两者都生效，且返回 mode 正确。"""
+        src = os.path.join(self.tmp, 'mx-src.png')
+        img = Image.new('RGB', (600, 240), (255, 255, 255))
+        d = ImageDraw.Draw(img)
+        d.text((40, 40), 'OLD ONE', font=_font(ARIAL, 30), fill=(0, 0, 0))
+        d.text((40, 160), 'OLD TWO', font=_font(ARIAL, 30), fill=(0, 0, 0))
+        img.save(src)
+        draw_box = [30, 20, 300, 70]
+        erase_box = [30, 140, 300, 70]
+        out = os.path.join(self.tmp, 'mx-out.png')
+        res = self.call({'op': 'typeset', 'items': [{'path': src, 'out': out, 'ops': [
+            {'box': draw_box, 'text': '新译文 New',
+             'style': {'erase': 'auto', 'align': 'center', 'valign': 'middle'}},
+            {'box': erase_box, 'text': '', 'style': {'erase': 'auto'}},
+        ]}]}, expect_ok=True)
+        ops = res['files'][0]['ops']
+        print('\n[typeset 混合] draw=%s' % json.dumps(ops[0], ensure_ascii=False))
+        print('[typeset 混合] erase-only=%s' % json.dumps(ops[1], ensure_ascii=False))
+        self.assertEqual(ops[0]['mode'], 'draw')
+        self.assertEqual(ops[1]['mode'], 'erase-only')
+        # 绘制路径的原有字段必须还在
+        for k in ('box', 'mode', 'fontSize', 'lines', 'fits', 'font',
+                  'eraseColor', 'erasedPixels', 'inkBefore', 'inkAfterErase',
+                  'inkFinal', 'lineWidths'):
+            self.assertIn(k, ops[0], '绘制返回缺少字段 %s' % k)
+        self.assertGreater(ops[0]['fontSize'], 0)
+        self.assertGreater(ops[0]['lines'], 0)
+        self.assertIsInstance(ops[0]['lineWidths'], list)
+        self.assertLessEqual(ops[1]['inkAfterErase'], 6)
+
+        before = np.asarray(Image.open(src).convert('RGB'), dtype=np.int16)
+        after = np.asarray(Image.open(out).convert('RGB'), dtype=np.int16)
+        dx0, dy0 = draw_box[0], draw_box[1]
+        dx1, dy1 = draw_box[0] + draw_box[2], draw_box[1] + draw_box[3]
+        ex0, ey0 = erase_box[0], erase_box[1]
+        ex1, ey1 = erase_box[0] + erase_box[2], erase_box[1] + erase_box[3]
+        # 绘制框：出现新墨迹
+        dsub = after[dy0:dy1, dx0:dx1]
+        self.assertGreater(int(np.count_nonzero(dsub.sum(axis=2) < 300)), 50,
+                           '绘制框内没有新墨迹')
+        # 只擦除框：旧墨迹消失
+        esub = after[ey0:ey1, ex0:ex1]
+        self.assertLess(int(np.count_nonzero(esub.sum(axis=2) < 300)), 10,
+                        '只擦除框内仍有旧墨迹')
+        self.assertGreater(int(np.count_nonzero(
+            before[ey0:ey1, ex0:ex1].sum(axis=2) < 300)), 50)
+        # 两个框之外的控制区逐字节不变
+        self.assertTrue(np.array_equal(before[:, 340:], after[:, 340:]),
+                        '两个框之外的像素被改动了')
 
 
 if __name__ == '__main__':

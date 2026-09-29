@@ -10,8 +10,12 @@
     * 成功：{"ok": true, ...}    失败：{"ok": false, "error": "..."}
     * 退出码 0 表示 out.json 已写出；日志一律写 stderr，不污染 out.json。
 
-支持的 op：probe / regions / crop / typeset / pdf / resize
+支持的 op：probe / regions / crop / typeset / stitch / pdf / resize
 仅依赖：标准库 + Pillow + numpy。
+
+图片字体相关：
+    * stitch   把多张小图（图片字体的词碎片）拼成一条，供整体 OCR；
+    * typeset  支持 text 为空 + erase=auto/rect 的「只擦除不绘制」模式。
 """
 
 import json
@@ -1163,6 +1167,7 @@ def op_probe(payload):
         'numpy': np.__version__,
         'fonts': fonts,
         'fontDir': FONT_DIR,
+        'stitch': True,          # 声明支持 stitch op（多图拼接整体 OCR）
     }
 
 
@@ -1238,6 +1243,27 @@ def _is_latin_only(text):
     return True
 
 
+def _erase_box(im, box2, erase, erase_color, pad):
+    """按 erase 模式处理一个框（绘制路径与「只擦除」路径共用）。
+
+    返回 (fill_color, 原墨迹数, 擦除像素数, 擦除后墨迹数)；行为与旧实现完全一致。
+    """
+    ring = max(2, min(6, int(round(min(box2[2], box2[3]) * 0.06))))
+    bg = ring_color(im, box2, pad, ring)
+    if bg is None:
+        bg = np.array(erase_color, dtype=np.float64)
+    fill_color = erase_color if erase == 'rect' else tuple(int(c) for c in bg)
+    old_ink, box_px = ink_snapshot(im, box2, fill_color)
+    erased = 0
+    if erase == 'rect':
+        rect_fill(im, box2, fill_color)
+        erased = box_px
+    elif erase == 'auto':
+        erased = erase_fill(im, box2, fill_color, 34, 1)
+    new_ink0, _ = ink_snapshot(im, box2, fill_color)
+    return fill_color, old_ink, erased, new_ink0
+
+
 def op_typeset(payload):
     items = payload.get('items')
     _require(isinstance(items, list) and items, 'items 必须是非空数组')
@@ -1263,8 +1289,41 @@ def op_typeset(payload):
             style = o.get('style') or {}
             _require(isinstance(style, dict), 'ops[%d].style 必须是对象' % k)
             if not text:
-                report.append({'box': box, 'fontSize': 0, 'lines': 0, 'fits': True,
-                               'skipped': 'empty text'})
+                # text 为空字符串/缺失：erase=auto/rect 时「只擦除不绘制」（图片字体
+                # 导出用：整句译文画在联合框里，其余碎片框只擦不画）；
+                # erase=none 时保持旧的空操作语义与返回字段。
+                erase_only = _s(style.get('erase'), 'auto')
+                _require(erase_only in ('auto', 'rect', 'none'),
+                         '不支持的 erase：%s' % erase_only)
+                if erase_only == 'none':
+                    report.append({'box': box, 'fontSize': 0, 'lines': 0, 'fits': True,
+                                   'skipped': 'empty text'})
+                    continue
+                ocx0, ocy0, ocx1, ocy1 = rect_bounds(im, box)
+                _require(ocx1 > ocx0 and ocy1 > ocy0, 'ops[%d] 的框与图像无交集' % k)
+                ox, oy = float(ocx0), float(ocy0)
+                ow, oh = float(ocx1 - ocx0), float(ocy1 - ocy0)
+                opad = max(0.0, _num(style.get('padding'), 2, 'padding'))
+                ocolor = _rgb(style.get('eraseColor'), (255, 255, 255), 'eraseColor')
+                obox2 = [ox, oy, ow, oh]
+                ofill, oold, oerased, onew0 = _erase_box(im, obox2, erase_only,
+                                                         ocolor, opad)
+                report.append({
+                    'box': obox2,
+                    'mode': 'erase-only',
+                    'fontSize': 0,
+                    'lines': 0,
+                    'fits': True,
+                    'eraseColor': [int(c) for c in ofill],
+                    'erasedPixels': int(oerased),
+                    'inkBefore': int(oold),
+                    'inkAfterErase': int(onew0),
+                    'inkFinal': int(onew0),
+                    'lineWidths': [],
+                })
+                log('typeset %s box=%s erase-only erased=%d'
+                    % (os.path.basename(out), [round(v) for v in obox2],
+                       report[-1]['erasedPixels']))
                 continue
             cx0, cy0, cx1, cy1 = rect_bounds(im, box)
             _require(cx1 > cx0 and cy1 > cy0, 'ops[%d] 的框与图像无交集' % k)
@@ -1288,20 +1347,8 @@ def op_typeset(payload):
             max_font = _int(style.get('maxFontSize'), None, 'maxFontSize')
 
             box2 = [x, y, w, h]
-            ring = max(2, min(6, int(round(min(w, h) * 0.06))))
-            bg = ring_color(im, box2, pad, ring)
-            if bg is None:
-                bg = np.array(erase_color, dtype=np.float64)
-            fill_color = erase_color if erase == 'rect' else tuple(int(c) for c in bg)
-            old_ink, box_px = ink_snapshot(im, box2, fill_color)
-
-            erased = 0
-            if erase == 'rect':
-                rect_fill(im, box2, fill_color)
-                erased = box_px
-            elif erase == 'auto':
-                erased = erase_fill(im, box2, fill_color, 34, 1)
-            new_ink0, _ = ink_snapshot(im, box2, fill_color)
+            fill_color, old_ink, erased, new_ink0 = _erase_box(im, box2, erase,
+                                                               erase_color, pad)
 
             need_cjk = not _is_latin_only(text)
             font_path = pick_font(need_cjk=need_cjk, explicit=style.get('fontPath'))
@@ -1328,6 +1375,7 @@ def op_typeset(payload):
             new_ink, _ = ink_snapshot(im, box2, fill_color)
             report.append({
                 'box': [x, y, w, h],
+                'mode': 'draw',
                 'fontSize': int(lay.get('size', 0)),
                 'lines': int(lay.get('n', 0)),
                 'fits': bool(fits and drawn),
@@ -1388,6 +1436,251 @@ def op_resize(payload):
         files.append({'out': out, 'w': new.size[0], 'h': new.size[1],
                       'srcWidth': W, 'srcHeight': H, 'maxDim': max_dim})
     return {'ok': True, 'files': files}
+
+
+# ---------------------------------------------------------------- 拼图（图片字体 → 整体 OCR）
+
+_STITCH_TOL = 34
+
+
+def _edge_median_color(arr):
+    """四边像素的中位色（RGBA 只统计不透明像素）。
+
+    四边全透明 → 返回 None，表示这张图的背景本身就是透明的。
+    """
+    h, w = arr.shape[:2]
+    if h < 1 or w < 1:
+        return None
+    if arr.shape[2] == 4:
+        a = arr[:, :, 3]
+        edge = np.zeros((h, w), dtype=bool)
+        edge[0, :] = True
+        edge[h - 1, :] = True
+        edge[:, 0] = True
+        edge[:, w - 1] = True
+        sel = edge & (a > 8)
+        if not sel.any():
+            return None
+        px = arr[:, :, :3][sel]
+    else:
+        px = np.concatenate([arr[0, :, :3], arr[h - 1, :, :3],
+                             arr[:, 0, :3], arr[:, w - 1, :3]], axis=0)
+    if px.size == 0:
+        return None
+    return np.median(px.astype(np.float32), axis=0)
+
+
+def _ink_mask(arr, bg, tol=_STITCH_TOL):
+    """墨迹掩膜：与背景色差异大（RGBA 且背景透明时，即「不透明」）的像素。"""
+    if arr.shape[2] == 4:
+        opaque = arr[:, :, 3] > 8
+        if bg is None:
+            return opaque
+        d = np.abs(arr[:, :, :3].astype(np.int16)
+                   - np.asarray(bg, dtype=np.int16).reshape(1, 1, 3)).max(axis=2)
+        return opaque & (d > tol)
+    d = np.abs(arr[:, :, :3].astype(np.int16)
+               - np.asarray(bg, dtype=np.int16).reshape(1, 1, 3)).max(axis=2)
+    return d > tol
+
+
+def _mask_bbox(mask):
+    """二值掩膜包围盒 (x0, y0, x1, y1)；全空返回 None。"""
+    ys = np.flatnonzero(mask.any(axis=1))
+    xs = np.flatnonzero(mask.any(axis=0))
+    if ys.size == 0 or xs.size == 0:
+        return None
+    return int(xs[0]), int(ys[0]), int(xs[-1]) + 1, int(ys[-1]) + 1
+
+
+def _stitch_bg_color(arr, mask, given):
+    """画布背景色：给了 bg 就用 bg；否则取第一张图墨迹包围盒「外圈」的中位色。
+
+    与 typeset 的 auto 擦除同口径（ring_color）。背景透明的图无法采样，
+    降级为按墨迹亮度选黑/白底（浅色字配黑底、深色字配白底）。
+    """
+    if given is not None:
+        return tuple(int(c) for c in given)
+    edge = _edge_median_color(arr)
+    sampled = None
+    bb = _mask_bbox(mask)
+    if bb is not None:
+        bw, bh = bb[2] - bb[0], bb[3] - bb[1]
+        if bw > 0 and bh > 0:
+            ring = max(2, min(6, int(round(min(bw, bh) * 0.06))))
+            rgba = Image.fromarray(np.ascontiguousarray(arr), 'RGBA')
+            sampled = ring_color(rgba, [bb[0], bb[1], bw, bh], 0.0, ring)
+    if edge is None:                      # 透明背景：圈外采样不可靠
+        if mask.any():
+            ink = arr[:, :, :3][mask].astype(np.float32)
+            lum = float(np.mean(ink[:, 0] * 0.299 + ink[:, 1] * 0.587
+                                + ink[:, 2] * 0.114))
+            return (0, 0, 0) if lum > 140 else (255, 255, 255)
+        return (255, 255, 255)
+    if sampled is None:
+        sampled = edge
+    vals = np.asarray(sampled, dtype=np.float64).reshape(-1)[:3]
+    return tuple(int(max(0, min(255, round(float(v))))) for v in vals)
+
+
+def _stitch_one(it, idx):
+    """处理一条 stitch item；失败抛错，由 op_stitch 收集（不影响其它 item）。"""
+    _require(isinstance(it, dict), 'items[%d] 必须是对象' % idx)
+    paths = it.get('paths')
+    _require(isinstance(paths, list) and paths, 'items[%d].paths 必须是非空数组' % idx)
+    out = it.get('out')
+    _require(isinstance(out, str) and out, 'items[%d].out 必须是非空字符串' % idx)
+    direction = _s(it.get('direction'), 'h')
+    _require(direction in ('h', 'v'),
+             'items[%d].direction 只能是 "h" 或 "v"，收到 %r' % (idx, direction))
+    align = _s(it.get('align'), 'baseline')
+    _require(align in ('baseline', 'top', 'center'),
+             'items[%d].align 只能是 baseline/top/center，收到 %r' % (idx, align))
+    gap = max(0, _int(it.get('gap'), 6, 'gap'))
+    padding = max(0, _int(it.get('padding'), 4, 'padding'))
+    bg_given = _rgb(it.get('bg'), None, 'bg')
+
+    parts = []
+    first_arr = first_mask = None
+    for j, p in enumerate(paths):
+        _require(isinstance(p, str) and p,
+                 'items[%d].paths[%d] 必须是路径字符串' % (idx, j))
+        im = load_image(p)
+        arr = np.asarray(to_rgba(im), dtype=np.uint8)      # 统一 RGBA 语义
+        h, w = arr.shape[:2]
+        _require(h > 0 and w > 0, 'items[%d].paths[%d] 尺寸非法' % (idx, j))
+        mask = _ink_mask(arr, _edge_median_color(arr))
+        if j == 0:
+            first_arr, first_mask = arr, mask
+        bb = _mask_bbox(mask)
+        if bb is None:            # 全背景图（无墨迹）：退化为整图
+            bb = (0, 0, w, h)
+        # 先按墨迹包围盒裁剪，每边留 padding（超出图像边界则贴边）
+        x0 = max(0, bb[0] - padding)
+        y0 = max(0, bb[1] - padding)
+        x1 = min(w, bb[2] + padding)
+        y1 = min(h, bb[3] + padding)
+        if x1 <= x0 or y1 <= y0:
+            x0, y0, x1, y1 = 0, 0, w, h
+        sub = mask[y0:y1, x0:x1]
+        iys = np.flatnonzero(sub.any(axis=1))
+        ixs = np.flatnonzero(sub.any(axis=0))
+        if iys.size:
+            ink_top, ink_bottom = int(iys[0]), int(iys[-1]) + 1
+        else:                     # 裁剪内没有墨迹：按整块裁剪对齐
+            ink_top, ink_bottom = 0, y1 - y0
+        if ixs.size:
+            ink_left, ink_right = int(ixs[0]), int(ixs[-1]) + 1
+        else:
+            ink_left, ink_right = 0, x1 - x0
+        parts.append({
+            'path': p,
+            'crop': [x0, y0, x1, y1],
+            'w': x1 - x0,
+            'h': y1 - y0,
+            'inkTop': ink_top,
+            'inkBottom': ink_bottom,
+            'inkLeft': ink_left,
+            'inkRight': ink_right,
+            'rgba': np.ascontiguousarray(arr[y0:y1, x0:x1]),
+        })
+
+    bg = _stitch_bg_color(first_arr, first_mask, bg_given)
+    n = len(parts)
+
+    # 画布尺寸：横向按需累加宽度；baseline 时按墨迹底（竖排时墨迹左）对齐
+    if direction == 'h':
+        if align == 'baseline':
+            y_base = max(d['inkBottom'] for d in parts)
+            canvas_h = y_base + max(d['h'] - d['inkBottom'] for d in parts)
+        else:
+            canvas_h = max(d['h'] for d in parts)
+        canvas_w = sum(d['w'] for d in parts) + gap * (n - 1)
+    else:
+        if align == 'baseline':
+            x_base = max(d['inkLeft'] for d in parts)
+            canvas_w = x_base + max(d['w'] - d['inkLeft'] for d in parts)
+        else:
+            canvas_w = max(d['w'] for d in parts)
+        canvas_h = sum(d['h'] for d in parts) + gap * (n - 1)
+    canvas_w = int(max(1, canvas_w))
+    canvas_h = int(max(1, canvas_h))
+
+    placed = []
+    if direction == 'h':
+        x = 0
+        for d in parts:
+            if align == 'baseline':
+                y = y_base - d['inkBottom']
+            elif align == 'center':
+                y = (canvas_h - d['h']) // 2
+            else:
+                y = 0
+            placed.append((x, y))
+            x += d['w'] + gap
+    else:
+        y = 0
+        for d in parts:
+            if align == 'baseline':
+                x = x_base - d['inkLeft']
+            elif align == 'center':
+                x = (canvas_w - d['w']) // 2
+            else:
+                x = 0
+            placed.append((x, y))
+            y += d['h'] + gap
+
+    canvas = Image.new('RGB', (canvas_w, canvas_h), bg)
+    files = []
+    for d, (x, y) in zip(parts, placed):
+        # 带 alpha 的输入按 alpha 合成到画布底色上（透明背景的图片字体不会糊成白块）
+        tile = Image.fromarray(d['rgba'], 'RGBA')
+        if int(d['rgba'][:, :, 3].min()) < 255:
+            canvas.paste(tile, (int(x), int(y)), tile.getchannel('A'))
+        else:
+            canvas.paste(tile.convert('RGB'), (int(x), int(y)))
+        # crop 是这块小图在「原图」里的裁剪框，配合 x/y 即可把整体 OCR 的
+        # 文字坐标映射回原图：src_x = crop[0] + (canvas_x - x)
+        files.append({'path': d['path'], 'x': int(x), 'y': int(y),
+                      'w': d['w'], 'h': d['h'],
+                      'crop': [int(v) for v in d['crop']],
+                      'inkTop': d['inkTop'], 'inkBottom': d['inkBottom'],
+                      'inkLeft': d['inkLeft'], 'inkRight': d['inkRight']})
+
+    odir = os.path.dirname(os.path.abspath(out))
+    if odir:
+        os.makedirs(odir, exist_ok=True)
+    if os.path.splitext(out)[1].lower() in ('', '.png'):
+        canvas.save(out, 'PNG')
+    else:
+        canvas.save(out)
+    log('stitch %s %s/%s %d 图 -> %dx%d'
+        % (os.path.basename(out), direction, align, n, canvas_w, canvas_h))
+    return {'out': out, 'w': canvas_w, 'h': canvas_h,
+            'direction': direction, 'align': align, 'gap': gap, 'padding': padding,
+            'bg': [int(c) for c in bg], 'sources': list(paths), 'parts': files}
+
+
+def op_stitch(payload):
+    """把多张小图拼成一条供整体 OCR；单条 item 失败不影响其它 item。
+
+    任何一条 item 失败 → 整体 ok:false（error 汇总），但成功的 item 仍写在 files 里。
+    """
+    items = payload.get('items')
+    _require(isinstance(items, list) and items, 'items 必须是非空数组')
+    files = []
+    errors = []
+    for i, it in enumerate(items):
+        try:
+            files.append(_stitch_one(it, i))
+        except Exception as exc:
+            log('stitch items[%d] 失败：%s' % (i, exc))
+            errors.append({'index': i, 'error': '%s' % exc})
+    res = {'ok': not errors, 'files': files, 'errors': errors}
+    if errors:
+        res['error'] = '；'.join('items[%d]：%s' % (e['index'], e['error'])
+                                for e in errors)
+    return res
 
 
 # ---------------------------------------------------------------- PDF
@@ -1995,6 +2288,7 @@ OPS = {
     'regions': op_regions,
     'crop': op_crop,
     'typeset': op_typeset,
+    'stitch': op_stitch,
     'pdf': op_pdf,
     'resize': op_resize,
 }

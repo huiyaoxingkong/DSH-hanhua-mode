@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """生成 v2 端到端测试夹具（字幕 / 电子书 / 漫画 / 图片艺术字）。
 
@@ -153,6 +153,35 @@ def make_art_styled(path):
     img.save(path)
 
 
+def make_ui_sprites(root):
+    """图片字体夹具：一个 UI 标签被拆成多张小图（文件名序号序列）+ 一张行内碎片图集。"""
+    d = os.path.join(root, 'ui')
+    os.makedirs(d, exist_ok=True)
+    f40 = font(FONTS['latin'], 44)
+    probe = ImageDraw.Draw(Image.new('RGB', (10, 10)))
+    MARGIN = 12   # 真实游戏的图片字体碎片都有留白；贴边字形会被 OCR 读错（'Op' → 'PP'）
+
+    def sprite(name, text):
+        w = max(2, int(probe.textlength(text, font=f40)) + MARGIN * 2)
+        img = Image.new('RGB', (w, 68), (255, 255, 255))
+        ImageDraw.Draw(img).text((MARGIN, 8), text, font=f40, fill=(0, 0, 0))
+        img.save(os.path.join(d, name))
+
+    # ① 文件名序号序列：同一标签的 3 个碎片（每张一个小图）
+    for i, t in enumerate(['New', 'Ga', 'me']):
+        sprite('btn_newgame_%d.png' % i, t)
+    # ② 第二个标签（顺带验证「同屏上下文」一致性提示）
+    for i, t in enumerate(['Op', 'tions']):
+        sprite('btn_options_%d.png' % i, t)
+    # ③ 行内碎片图集：同一行两个碎片之间留大间隙（区域检测会拆开，分组器负责再关联成一个词）
+    atlas = Image.new('RGB', (640, 120), (255, 255, 255))
+    ad = ImageDraw.Draw(atlas)
+    ad.text((20, 30), 'Con', font=f40, fill=(0, 0, 0))
+    ad.text((160, 30), 'tinue', font=f40, fill=(0, 0, 0))
+    ad.text((480, 30), 'Quit', font=f40, fill=(0, 0, 0))
+    atlas.save(os.path.join(d, 'menu_atlas.png'))
+
+
 def make_epub(path):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with zipfile.ZipFile(path, 'w') as z:
@@ -190,6 +219,8 @@ def main():
         make_comic_page(p, i)
         page_paths.append(p)
     make_cbz(os.path.join(root, 'comic', 'ch1.cbz'), page_paths)
+
+    make_ui_sprites(root)
 
     make_art_title(os.path.join(root, 'art', 'title.png'))
     make_art_styled(os.path.join(root, 'art', 'styled.png'))

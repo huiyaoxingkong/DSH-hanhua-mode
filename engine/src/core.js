@@ -145,6 +145,12 @@ const SEED_CONFIG = {
   powershellPath: '',
   ffmpegPath: '',
   ffprobePath: '',
+  // ── v2.1：图片字体（用图片代替字体的游戏文本）关联 ──
+  imageFontGrouping: 'auto',    // auto / filename / none
+  imageFontMinParts: 2,         // 少于这么多碎片不成组
+  imageFontPhraseGap: 2.5,      // 同一行内：间隙 > 该值 × 行高 才断开成另一个词组
+  imageFontGap: 6,              // 拼接时碎片之间的像素间距
+  imageFontMaxParts: 8,         // 单组成员上限（超过就认为是一串独立图标，不关联）
 }
 
 let config = Object.assign({}, SEED_CONFIG)
@@ -912,8 +918,21 @@ async function scanRoot(rootArg, opts) {
   await walk(root, 0)
   state.files = files
   state.summary.scanned = files.length
+  // 「图片字体」探测：如果同目录里有一串编号小图（name_0..name_n），那多半是把字体做成了图片。
+  // 直接用分组器判断（与 OCR 阶段同一套规则，不会出现两套口径）。
+  let imageFont = null
+  if (kinds.image >= 6 && String(config.imageFontGrouping || 'auto') !== 'none') {
+    const probes = files.filter((f) => f.kind === 'image').map((f) => ({ id: f.rel, file: f.rel, page: null, pageEntry: null, box: [0, 0, 1, 1], text: '', kind: 'image', ink: 0 }))
+    try {
+      const g = groupImageFonts(probes, { mode: String(config.imageFontGrouping || 'auto'), minParts: Math.max(2, Number(config.imageFontMinParts) || 2) })
+      const seq = (g.groups || []).filter((x) => x.kind === 'sequence')
+      if (seq.length) {
+        imageFont = { suspected: true, groups: seq.length, sample: seq.slice(0, 3).map((x) => x.members.map((m) => m.file)) }
+      }
+    } catch (e) {}
+  }
   const limit = Math.max(1, Math.min(Number(opts.limit) || 200, 2000))
-  return { root, total: files.length, kinds, files: files.slice(0, limit), truncated: files.length > limit }
+  return { root, total: files.length, kinds, imageFont, files: files.slice(0, limit), truncated: files.length > limit }
 }
 
 const SKIP_KEYS = new Set(['id', 'code', 'iconIndex', 'priority', 'note', 'meta'])
@@ -1316,11 +1335,30 @@ function ctxTagOf(e) {
   if (f === 'pdftext') return 'PDF 文本层'
   if (f === 'image') {
     const kind = (e.loc && e.loc.kind) || (e.ref && e.ref.kind) || ''
+    if (kind === 'imagefont') return '图片字体标签'
     if (kind === 'art') return '图片艺术字'
     if (kind === 'bubble') return '漫画气泡'
     return '图片文字'
   }
   return '文本'
+}
+
+// 图片字体标签的「同屏上下文」：同一目录/同一页的其它标签。
+// 作用是把一屏 UI 的其它词条一并交给模型 —— 菜单项之间风格要一致（New Game/Options/Quit 该译成一套），
+// 这是「翻译后语义通顺」的关键手段之一，且不额外增加请求次数（只是提示词里多一行）。
+function siblingLabelsOf(entry, all) {
+  if (!entry || (entry.loc && entry.loc.kind) !== 'imagefont') return []
+  const dirOf = (p) => String(p || '').replace(/[\\/][^\\/]*$/, '')
+  const near = (x) => x !== entry && x.format === 'image' && x.loc && x.loc.kind === 'imagefont' &&
+    (dirOf(x.file) === dirOf(entry.file) || (x.loc.page !== undefined && x.loc.page === entry.loc.page && x.file === entry.file))
+  const out = []
+  for (const x of all) {
+    if (!near(x)) continue
+    const s = String(x.source || '').trim()
+    if (s && out.indexOf(s) < 0) out.push(s)
+    if (out.length >= 12) break
+  }
+  return out
 }
 
 function translateWithGlossary(text, gloss, cacheMap) {
@@ -1357,7 +1395,19 @@ function translateWithGlossary(text, gloss, cacheMap) {
 async function translateWithApi(items) {
   if (!config.apiUrl || !config.apiKey) throw new Error('未配置 apiUrl/apiKey')
   const pairs = items.map((e) => [ctxTagOf(e), e.source])
-  const prompt = 'Game / manga / subtitle localization. Translate each [context, text] pair into ' + config.targetLang + ' (from ' + config.sourceLang + '). Match the context style: names/menu short, dialogue natural, descriptions complete, subtitles concise (one line ≈ one line). Keep every placeholder exactly as-is (%s %d {0} \\N[1] \\V[1] <tag> and ⟦1⟧-style tokens). Output ONLY a JSON array of ' + items.length + ' strings, same order.\n' + JSON.stringify(pairs)
+  const hasImageFont = items.some((e) => e.loc && e.loc.kind === 'imagefont')
+  const siblings = hasImageFont ? siblingLabelsOf(items.find((e) => e.loc && e.loc.kind === 'imagefont'), state.entries) : []
+  const lines = [
+    'Game / manga / subtitle localization. Translate each [context, text] pair into ' + config.targetLang + ' (from ' + config.sourceLang + ').',
+    'Match the context style: names/menu short, dialogue natural, descriptions complete, subtitles concise (one line ≈ one line).',
+    hasImageFont
+      ? 'Pairs tagged 图片字体标签 are UI labels assembled from image fragments. Translate them as ONE fluent phrase (never word-by-word), keep the same wording style across a whole menu screen, and stay short enough to fit the original sprite run.'
+      : '',
+    siblings.length ? ('Other labels on the same screen (for consistent wording): ' + JSON.stringify(siblings.slice(0, 10))) : '',
+    'Keep every placeholder exactly as-is (%s %d {0} \\N[1] \\V[1] <tag> and ⟦1⟧-style tokens).',
+    'Output ONLY a JSON array of ' + items.length + ' strings, same order.',
+  ].filter(Boolean)
+  const prompt = lines.join('\n') + '\n' + JSON.stringify(pairs)
   const res = await apiRequest({ model: config.model, temperature: 0.1, messages: [{ role: 'user', content: prompt }] })
   noteUsage({ apiCalls: 1 })
   if (res.usage) noteUsage({ apiPromptTokens: res.usage.prompt_tokens || 0, apiCompletionTokens: res.usage.completion_tokens || 0 })
@@ -1370,7 +1420,7 @@ async function translateWithApi(items) {
   return arr.map((v) => String(v))
 }
 
-function qaCheck(source, target, method) {
+function qaCheck(source, target, method, entry) {
   const w = []
   const ps = JSON.stringify(placeholdersOf(source))
   const pt = JSON.stringify(placeholdersOf(target))
@@ -1387,6 +1437,22 @@ function qaCheck(source, target, method) {
     if (ratio < 0.2) w.push('\u8bd1\u6587\u8fc7\u77ed x' + ratio.toFixed(1))
   }
   if (method !== 'api' && !quiet && /[A-Za-z]{3,}/.test(target)) w.push('\u8bd1\u6587\u6b8b\u7559\u82f1\u6587\uff08\u53ef\u7528 hanhua_config \u914d\u7f6e\u5728\u7ebf API \u8865\u5168\uff09')
+  // ── 图片字体（多碎片拼成的 UI 标签）专项检查：语义通顺与能否放下
+  if (entry && entry.loc && entry.loc.kind === 'imagefont') {
+    const parts = entry.loc.parts || []
+    const box = entry.loc.box || [0, 0, 0, 0]
+    if (parts.length < 2) w.push('图片字体分组只有 ' + parts.length + ' 个碎片（可能未正确关联）')
+    const signal = (String(source).match(/[A-Za-z\u3040-\u30ff\u4e00-\u9fff\uac00-\ud7af]/g) || []).length
+    if (parts.length >= 3 && signal <= 1) w.push('拼接识别结果过短（' + signal + ' 个有效字符 / ' + parts.length + ' 个碎片），碎片可能没关联完整')
+    const naive = entry.loc.naiveSource
+    if (naive && !quiet && String(target).trim() === String(naive).trim() && String(naive).trim() !== String(source).trim()) w.push('译文像是碎片拼接（未按整体语义翻译）')
+    if (!quiet && box[2] > 0 && box[3] > 0 && target) {
+      const cjk = (String(target).match(/[\u2e80-\u9fff\uff00-\uffef\uac00-\ud7af]/g) || []).length
+      const other = String(target).replace(/[\u2e80-\u9fff\uff00-\uffef\uac00-\ud7af]/g, '').length
+      const estWidth = cjk * box[3] + other * box[3] * 0.55
+      if (estWidth > box[2] * 1.35) w.push('译文可能超出原框（预计需要 ' + Math.round(estWidth) + 'px，原框 ' + box[2] + 'px，排版会自动缩小字号）')
+    }
+  }
   return w
 }
 
@@ -1405,8 +1471,9 @@ async function qaAction(args) {
   if (Array.isArray(ids) && ids.length) { const idSet = new Set(ids); pool = pool.filter((r) => idSet.has(r.id)) }
   const issues = []
   let warnings = 0
+  const byId = new Map(state.entries.map((e) => [e.id, e]))
   for (const r of pool) {
-    const w = qaCheck(r.source, r.target, r.method)
+    const w = qaCheck(r.source, r.target, r.method, byId.get(r.id))
     if (w.length) { warnings++; issues.push({ id: r.id, file: r.file, source: r.source.slice(0, 80), target: r.target.slice(0, 80), method: r.method, warnings: w }) }
   }
   state.summary.qaWarnings = warnings
@@ -1509,8 +1576,9 @@ async function translateEntries(args) {
     }
   }
   let qaWarnings = 0
+  const entryByIdQa = new Map(state.entries.map((e) => [e.id, e]))
   for (const r of results) {
-    r.warnings = qaCheck(r.source, r.target, r.method)
+    r.warnings = qaCheck(r.source, r.target, r.method, entryByIdQa.get(r.id))
     if (r.warnings.length) qaWarnings++
   }
   // 累计译文：本次处理到的 id 覆盖旧值，其余保留（重复调用可分批跑完全部条目）
@@ -1738,14 +1806,28 @@ async function exportEntries(args) {
   state.entries.forEach((e) => { entryById[e.id] = e })
   const byFile = {}
   results.forEach((r) => { (byFile[r.file] = byFile[r.file] || []).push(r) })
+  // 图片字体：一个语义单元可能横跨多张小图（每个碎片一个文件）。译文只画在锚点碎片那一张，
+  // 其余碎片必须被**擦空**（否则旧字形会留在界面上）。这里把非锚点碎片变成各文件的擦除任务。
+  let eraseTaskCount = 0
+  for (const r of results) {
+    const e = entryById[r.id]
+    if (!e || !e.loc || e.loc.kind !== 'imagefont' || !Array.isArray(e.loc.parts)) continue
+    if (r.target === r.source) continue
+    for (const p of e.loc.parts) {
+      if (!p || !p.file || p.file === r.file) continue
+      ;(byFile[p.file] = byFile[p.file] || []).push({ id: r.id + '@erase', file: p.file, source: r.source, target: '', method: 'erase', __erase: true, __box: p.box, __groupId: e.loc.groupId, __from: r.file })
+      eraseTaskCount++
+    }
+  }
   const out = []
   for (const rel of Object.keys(byFile)) {
     const rs = byFile[rel]
     const srcPath = joinPath(state.root, rel)
     const ext = extOf(rel)
     const base = basenameOf(rel)
-    const firstEntry = entryById[rs[0].id]
-    const fmt = firstEntry ? firstEntry.format : ''
+    const firstReal = rs.find((x) => !x.__erase)
+    const firstEntry = firstReal ? entryById[firstReal.id] : null
+    const fmt = firstEntry ? firstEntry.format : (rs[0] && rs[0].__erase ? 'image' : '')
     const kind = firstEntry && firstEntry.format === 'image' ? 'image' : kindOfFile(base, ext)
     let result
     try {
@@ -1819,8 +1901,8 @@ async function backupOnce(rel, kind, maxBytes, newText) {
 const maskConfig = (c) => Object.assign({}, c, { apiKey: c.apiKey ? (c.apiKey.slice(0, 4) + '****' + c.apiKey.slice(-4)) : '' })
 
 const CONFIG_STRING_FIELDS = ['apiUrl', 'apiKey', 'model', 'targetLang', 'sourceLang', 'rgssEncoding', 'krkrEncoding', 'subtitleEncoding', 'iconvPath',
-  'visionModel', 'ocrEngine', 'ocrLang', 'ocrLayout', 'typesetFont', 'pythonPath', 'powershellPath', 'ffmpegPath', 'ffprobePath', 'workbenchEnginePath']
-const CONFIG_NUMBER_FIELDS = ['visionMaxTokens', 'ocrBudget', 'ocrMaxImages', 'ocrMinArea', 'ocrMaxRegions']
+  'visionModel', 'ocrEngine', 'ocrLang', 'ocrLayout', 'typesetFont', 'pythonPath', 'powershellPath', 'ffmpegPath', 'ffprobePath', 'workbenchEnginePath', 'imageFontGrouping']
+const CONFIG_NUMBER_FIELDS = ['visionMaxTokens', 'ocrBudget', 'ocrMaxImages', 'ocrMinArea', 'ocrMaxRegions', 'imageFontMinParts', 'imageFontPhraseGap', 'imageFontGap', 'imageFontMaxParts']
 
 async function configAction(args) {
   await loadMeta()

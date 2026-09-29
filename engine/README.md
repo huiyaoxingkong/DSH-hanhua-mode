@@ -15,6 +15,7 @@ engine/
 ├── src/                       ★ 唯一真源
 │   ├── subtitle.js            字幕库（纯函数，可单测）：srt/vtt/ass/ssa/lrc/sub/smi
 │   ├── ebook.js               电子书文本层（纯函数，可单测）：container/opf/spine/XHTML 文本节点
+│   ├── group.js               图片字体关联（纯函数，可单测）：文件名序号序列 / 同图同行碎片 → 语义单元
 │   ├── core.js                引擎主体：扫描/解析/翻译/QA/导出/Marshal/krkr/配置/词典
 │   ├── media.js               基础设施：子进程脚本、ZIP、HTTP(apiRequest)、字幕/EPUB/图片回写、媒体操作
 │   ├── ocr.js                 OCR 组件：区域检测→本地 OCR→视觉兜底→缓存/去重/预算
@@ -65,6 +66,15 @@ engine/
 16. `parseFiles files=[...]` 是增量语义：只替换这些文件的条目，**不能**把其它文件的既有条目/译文清空。
 17. `.ps1` 子进程脚本必须保留 **UTF-8 BOM**：PowerShell 5.1 读无 BOM 的 `.ps1` 会按 ANSI 解码，
     中文注释会吃掉引号导致语法错误。构建时内联、运行时落盘都会补 BOM。
+18. **图片字体必须「先关联、再识别」**：一个小图一个字形的游戏，逐图 OCR 只会得到碎片/空串；
+    正确顺序是 区域检测 → 裁剪 → 分组（group.js）→ 拼接（imglib `stitch`）→ 整体 OCR → **一个**语义单元条目。
+    两个易踩的点：(a) 拼接间距/留白**不能大**，否则 OCR 会在碎片之间插空格（`NewGame` → `New Ga me`）；
+    (b) 同一张图里同行的碎片**不要拼接**，直接裁原图并集框（保留真实字距，`Continue` 才不会被读成 `Con tinue`）。
+19. **`imglib.stitch` 单条失败时整体 `ok:false`（成功的条目仍写盘）**：调用要带 `allowFail`，
+    再按返回的 `files[].out` 决定哪些拼接条可用；只对**真正提交给 stitch 的组**做失败回退，
+    否则会把走「并集裁剪」的 atlas 组一起误删（这个 bug 真实踩过）。
+20. **同一作用域内的 `const` 有 TDZ（续）**：`group.js` 必须排在 `core.js` 之前的 libs 段，
+    且它内部只能有惰性初始化（不能在建包时就引用 core 的常量）。
 
 > 自检：`node ..\tests\run-all.mjs`（11 套：挂载/派生一致性/生成物一致/库单测/子进程脚本自检/真实内核全流程/v2 端到端）。
 

@@ -38,7 +38,7 @@ const trimEnd = (t) => t.replace(/\s+$/, '')
 
 // ── 1) 纯函数库（先注入；不含服务访问，可独立单测）
 const libParts = []
-for (const f of ['subtitle.js', 'ebook.js']) {
+for (const f of ['subtitle.js', 'ebook.js', 'group.js']) {
   const t = readOrNull(join(SRC, f))
   if (t === null) continue
   libParts.push(trimEnd(stripExports(t)))
@@ -98,7 +98,7 @@ const body = [...libParts, ...subParts, core, trimEnd(assets), tools, rpc].join(
 const staticOut = HEADER('静态插件包（「汉化模式」预设用）', '消费 host 的 tools/systemPrompt/fs/web/sandboxPolicy/subprocess 服务；不提供任何服务，无需 isolate realm。') + `
 export const name = 'hanhua-engine'
 export const inject = ['tools', 'systemPrompt', 'fs', 'web', 'sandboxPolicy', 'subprocess']
-export const version = '2.0.0'
+export const version = '2.1.0'
 
 export function apply(ctx) {
 ${indent(body, 2)}

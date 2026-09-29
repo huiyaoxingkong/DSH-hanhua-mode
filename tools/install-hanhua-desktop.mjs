@@ -28,7 +28,7 @@ const PROFILE = argOf('--profile', process.env.DSH_PROFILE || 'desktop')
 const TEMPLATE = join(REPO, 'tools', 'standard.patch.yml')
 const SRC_PLUGIN_DIR = join(REPO, 'preset', 'plugins', 'hanhua')
 const DRY = argv.includes('--dry')
-const VERSION = '2.0.0'
+const VERSION = '2.1.0'
 
 const PRESET_ID = 'hanhua'
 const INSTALL_DIR = join(HOME, 'hanhua')
